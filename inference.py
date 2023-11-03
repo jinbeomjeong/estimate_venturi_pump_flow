@@ -3,7 +3,7 @@ from utils.load_model import FlowRateInference
 from utils.dataset import load_dataset
 
 est_model = FlowRateInference()
-feature_data, target_data = load_dataset()
+feature_data, target_data = load_dataset(train_dataset_indices=[1, 2, 3], val_dataset_indices=[5])
 
 
 t0 = time.time()

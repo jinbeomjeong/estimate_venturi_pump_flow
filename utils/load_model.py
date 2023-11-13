@@ -10,7 +10,7 @@ class FlowRateInference:
         # load saved model
         self.t0 = time.time()
         self.pred_output = np.zeros(shape=1, dtype=np.float64)
-        self.model = joblib.load('saved_model' + os.sep + 'model.pkl')
+        self.model = joblib.load('saved_model' + os.sep + 'basic_lgb_model.pkl')
         print(f"model load time(sec): {(time.time() - self.t0):.1f}")
 
     def run_inference(self, input_data: np.ndarray) -> np.ndarray:

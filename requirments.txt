@@ -2,4 +2,5 @@ graphviz
 pandas
 lightgbm
 scikit-learn
-matplotlib
+seaborn
+tqdm

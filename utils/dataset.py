@@ -5,12 +5,14 @@ import pandas as pd
 from tqdm import tqdm
 
 
-pipe_length_30m_indices = np.array([18, 17, 22, 21, 5, 1, 6, 2, 26, 29, 25, 30, 13, 9, 14, 10], dtype=np.uint8)
-pipe_length_45m_indices = np.array([24, 23, 20, 19, 3, 4, 7, 8, 27, 32, 28, 31, 16, 15, 12, 11], dtype=np.uint8)
-venturi_pump_65cm_indices = np.array([18, 20, 19, 17, 3, 4, 1, 2, 26, 25, 27, 28, 9, 10, 12, 11], dtype=np.uint8)
-venturi_pump_45cm_indices = np.array([24, 23, 22, 21, 5, 6, 7, 8, 29, 32, 30, 31, 16, 13, 15, 14], dtype=np.uint8)
 motor_speed_750_indices = np.array([23, 19, 17, 21, 3, 5, 1, 7, 29, 25, 27, 31, 13, 15, 9, 11], dtype=np.uint8)
 motor_speed_900_indices = np.array([24, 18, 20, 22, 4, 6, 8, 2, 26, 32, 28, 30, 16, 14, 10, 12], dtype=np.uint8)
+hose_length_30m_indices = np.array([18, 17, 22, 21, 5, 1, 6, 2, 26, 29, 25, 30, 13, 9, 14, 10], dtype=np.uint8)
+hose_length_45m_indices = np.array([24, 23, 20, 19, 3, 4, 7, 8, 27, 32, 28, 31, 16, 15, 12, 11], dtype=np.uint8)
+suction_height_65cm_indices = np.array([18, 20, 19, 17, 3, 4, 1, 2, 26, 25, 27, 28, 9, 10, 12, 11], dtype=np.uint8)
+suction_height_45cm_indices = np.array([24, 23, 22, 21, 5, 6, 7, 8, 29, 32, 30, 31, 16, 13, 15, 14], dtype=np.uint8)
+
+std_val_names = ['25', '26', '27', '28', '29', '30', '31', '32']
 
 data_root_path = 'data' + os.sep
 data_file_names = os.listdir('data')
@@ -25,23 +27,73 @@ def load_dataset(train_dataset_indices: np.ndarray, val_dataset_indices: np.ndar
         raw_data = pd.read_csv(data_root_path + data_file_name)
         run_index = int(data_file_name[8:10])
 
-        if np.any(run_index == motor_speed_750_indices):
-            motor_speed = 750
-
-        if np.any(run_index == motor_speed_900_indices):
-            motor_speed = 900
-
-        motor_speed_arr = np.full(shape=raw_data.shape[0], fill_value=motor_speed)
-
         if np.any(run_index == train_dataset_indices):
-            # raw_data = pd.concat([raw_data, pd.DataFrame(motor_speed_arr, columns=['motor_speed(rpm)'])], axis=1)
             train_dataset = pd.concat([train_dataset, raw_data], axis=0)
 
         if np.any(run_index == val_dataset_indices):
-            # raw_data = pd.concat([raw_data, pd.DataFrame(motor_speed_arr, columns=['motor_speed(rpm)'])], axis=1)
             val_dataset = pd.concat([val_dataset, raw_data], axis=0)
 
     train_dataset.drop(columns=['time(sec)', 'main_pump_outlet_F(LPM)'], inplace=True)
     val_dataset.drop(columns=['time(sec)', 'main_pump_outlet_F(LPM)'], inplace=True)
 
     return train_dataset, val_dataset
+
+
+def load_raw_data(data_indices: np.ndarray):
+    raw_data_set = pd.DataFrame()
+
+    for data_file_name in tqdm(data_file_names, desc='load dataset', ncols=80):
+        raw_data = pd.read_csv(data_root_path + data_file_name)
+        run_index = int(data_file_name[8:10])
+
+        motor_speed: int = 0
+        hose_length: int = 0
+        suction_height: float = 0
+
+        if np.any(run_index == motor_speed_750_indices):
+            motor_speed = 750
+
+        if np.any(run_index == motor_speed_900_indices):
+            motor_speed = 900
+
+        if np.any(run_index == hose_length_30m_indices):
+            hose_length = 30
+
+        if np.any(run_index == hose_length_45m_indices):
+            hose_length = 45
+
+        if np.any(run_index == suction_height_45cm_indices):
+            suction_height = -0.45
+
+        if np.any(run_index == suction_height_65cm_indices):
+            suction_height = -0.65
+
+        motor_speed_arr = np.full(shape=raw_data.shape[0], fill_value=motor_speed)
+        hose_length_arr = np.full(shape=raw_data.shape[0], fill_value=hose_length)
+        suction_height_arr = np.full(shape=raw_data.shape[0], fill_value=suction_height)
+
+        raw_data = pd.concat([raw_data, pd.DataFrame(motor_speed_arr, columns=['motor_speed(rpm)'])], axis=1)
+        raw_data = pd.concat([raw_data, pd.DataFrame(hose_length_arr, columns=['hose_length(m)'])], axis=1)
+        raw_data = pd.concat([raw_data, pd.DataFrame(suction_height_arr, columns=['suction_height_of_venturi(m)'])], axis=1)
+
+        raw_data_set = pd.concat([raw_data_set, raw_data], axis=0)
+
+    return raw_data_set
+
+
+def load_named_dataset(dataset_indices: np.ndarray):
+    std_val_dataset = pd.DataFrame()
+
+    for std_val_name in tqdm(dataset_indices, desc='load dataset', ncols=80):
+        for data_file_name in data_file_names:
+            raw_data = pd.read_csv(data_root_path + data_file_name)
+            run_index = int(data_file_name[8:10])
+
+            if run_index == int(std_val_name):
+                std_val_name_list = std_val_names * raw_data.shape[0]
+                raw_data = pd.concat([raw_data, pd.DataFrame(std_val_name_list, columns=['run_name'])], axis=1)
+                std_val_dataset = pd.concat([std_val_dataset, raw_data], axis=0)
+
+    std_val_dataset.drop(columns=['main_pump_outlet_F(LPM)'], inplace=True)
+
+    return std_val_dataset

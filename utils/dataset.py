@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 motor_speed_750_indices = np.array([23, 19, 17, 21, 3, 5, 1, 7, 29, 25, 27, 31, 13, 15, 9, 11], dtype=np.uint8)
@@ -21,7 +21,7 @@ data_file_names = os.listdir('data')
 def load_dataset(data_indices: list) -> pd.DataFrame():
     raw_data_set = pd.DataFrame()
 
-    for data_index in tqdm(data_indices, desc='loading dataset...', ncols=80):
+    for data_index in tqdm(data_indices, desc='loading dataset...'):
         for data_file_name in data_file_names:
             raw_data = pd.read_csv(data_root_path + data_file_name)
             run_index = int(data_file_name[8:10])

@@ -15,10 +15,13 @@ suction_height_45cm_indices = np.array([24, 23, 22, 21, 5, 6, 7, 8, 29, 32, 30, 
 std_val_names = ['25', '26', '27', '28', '29', '30', '31', '32']
 
 data_root_path = 'data' + os.sep
-data_file_names = os.listdir('data')
+data_file_names = os.listdir(os.path.join('data', 'ver_1'))
+
+data_v2_train_file_list = []
+data_v2_val_file_list = []
 
 
-def load_dataset(data_indices: list) -> pd.DataFrame():
+def load_dataset_v1(data_indices: list) -> pd.DataFrame():
     raw_data_set = pd.DataFrame()
 
     for data_index in tqdm(data_indices, desc='loading dataset...'):
@@ -62,3 +65,16 @@ def load_dataset(data_indices: list) -> pd.DataFrame():
                 raw_data_set = pd.concat([raw_data_set, raw_data], axis=0)
 
     return raw_data_set
+
+
+def load_dataset_v2(file_name_list: list) -> tuple:
+    for file_name in file_name_list:
+        if int(file_name[3:5]) == 3:
+            data_v2_val_file_list.append(file_name)
+        else:
+            data_v2_train_file_list.append(file_name)
+
+    print(data_v2_train_file_list)
+    print(data_v2_val_file_list)
+
+

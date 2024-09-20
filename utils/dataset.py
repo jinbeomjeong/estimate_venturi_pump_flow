@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+from tensorflow.python.ops.numpy_ops import array
 
 from tqdm.auto import tqdm
 
@@ -16,9 +17,6 @@ std_val_names = ['25', '26', '27', '28', '29', '30', '31', '32']
 
 data_root_path = 'data' + os.sep
 data_file_names = os.listdir(os.path.join('data', 'ver_1'))
-
-data_v2_train_file_list = []
-data_v2_val_file_list = []
 
 
 def load_dataset_v1(data_indices: list) -> pd.DataFrame():
@@ -67,14 +65,78 @@ def load_dataset_v1(data_indices: list) -> pd.DataFrame():
     return raw_data_set
 
 
-def load_dataset_v2(file_name_list: list) -> tuple:
-    for file_name in file_name_list:
-        if int(file_name[3:5]) == 3:
-            data_v2_val_file_list.append(file_name)
-        else:
-            data_v2_train_file_list.append(file_name)
+def get_test_case(n_case: int, n_case_iter: int) -> dict:
+    test_case = {'test_case': [], 'test_case_iter': [], 'nozzle_len': [], 'nozzle_dia': [], 'venturi_dist': []}
+    nozzle_len_list = [12, 24, 36]
+    nozzle_dia_list = [12, 15.8, 20]
+    venturi_len_list = [0, 15, 30, 45, 60]
 
-    print(data_v2_train_file_list)
-    print(data_v2_val_file_list)
+    for i in range(n_case):
+        for j in range(n_case_iter):
+            nozzle_idx = i // 5
+            stage_idx = i % 5
+            nozzle_len_idx = nozzle_idx // 3
+            nozzle_dia_idx = nozzle_idx % 3
+
+            test_case['test_case'].append(i+1)
+            test_case['test_case_iter'].append(j+1)
+            test_case['nozzle_len'].append(nozzle_len_list[nozzle_len_idx])
+            test_case['nozzle_dia'].append(nozzle_dia_list[nozzle_dia_idx])
+            test_case['venturi_dist'].append(venturi_len_list[stage_idx])
+
+    return test_case
 
 
+def load_dataset_v2(file_path_list: list) -> pd.DataFrame:
+    df_list = []
+    col_name = ['time(s)', 'pressure_1(bar)', 'main_pressure(bar)', 'venturi_pressure_1(bar)', 'venturi_pressure_2(bar)',
+                'venturi_pressure_3(bar)', 'venturi_pressure_4(bar)', 'venturi_pressure_5(bar)', 'pump_speed(rpm)',
+                'water_temp(c)','reserved', 'outlet_flowrate(lpm)', 'inlet_flowrate(lpm)']
+    extra_col_name = ['test_case', 'test_case_iter', 'nozzle_len(mm)', 'nozzle_dia(mm)', 'venturi_dist(mm)']
+
+    col_name = col_name + extra_col_name
+
+    test_case = get_test_case(n_case=45, n_case_iter=3)
+
+    for file_path in tqdm(file_path_list, desc='loading dataset...'):
+        file_name = os.path.basename(file_path)
+        raw_data = pd.read_csv(file_path, encoding='cp949')
+        data_value = raw_data.iloc[7:, :].values
+        data_value = data_value.astype(np.float64)
+
+        time_arr = np.arange(0, data_value.shape[0]) / 100
+        data_value = np.insert(arr=data_value, obj=0, values=time_arr, axis=1)
+
+        n_test_case = int(file_name[0:2])
+        n_test_case_iter = int(file_name[3:5])
+
+        sel_case_idx = (np.array(test_case['test_case']) == n_test_case) * \
+                       (np.array(test_case['test_case_iter']) == n_test_case_iter)
+
+        nozzle_len = test_case['nozzle_len'][np.argmax(sel_case_idx)]
+        nozzle_dia = test_case['nozzle_dia'][np.argmax(sel_case_idx)]
+        venturi_len = test_case['venturi_dist'][np.argmax(sel_case_idx)]
+
+        test_case_arr = np.full(shape=data_value.shape[0], fill_value=n_test_case)
+        test_case_iter_arr = np.full(shape=data_value.shape[0], fill_value=n_test_case_iter)
+        nozzle_len_arr = np.full(shape=data_value.shape[0], fill_value=nozzle_len)
+        nozzle_dia_arr = np.full(shape=data_value.shape[0], fill_value=nozzle_dia)
+        venturi_len_arr = np.full(shape=data_value.shape[0], fill_value=venturi_len)
+
+        extra_data = np.stack(arrays=(test_case_arr, test_case_iter_arr, nozzle_len_arr, nozzle_dia_arr, venturi_len_arr), axis=1)
+        df_list.append(np.hstack([data_value, extra_data]))
+
+    data_set = np.vstack(df_list)
+    data_set = data_set.astype(np.float64)
+
+    return pd.DataFrame(data=data_set, columns=col_name)
+
+
+def create_lstm_dataset(data: np.array, seq_len=1, pred_distance=1, target_idx_pos=1):
+    feature, target = [], []
+
+    for i in range(data.shape[0] - seq_len - pred_distance - 1):
+        feature.append(data[i:i + seq_len, 0:target_idx_pos])
+        target.append(data[i + seq_len + pred_distance, target_idx_pos])
+
+    return np.array(feature), np.array(target)

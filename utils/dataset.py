@@ -132,11 +132,12 @@ def load_dataset_v2(file_path_list: list) -> pd.DataFrame:
     return pd.DataFrame(data=data_set, columns=col_name)
 
 
-def create_lstm_dataset(data: np.array, seq_len=1, pred_distance=1, target_idx_pos=1):
+def create_lstm_dataset(data: np.array, seq_len=1, pred_distance=0, target_idx_pos=1):
     feature, target = [], []
 
-    for i in range(data.shape[0] - seq_len - pred_distance - 1):
-        feature.append(data[i:i + seq_len, 0:target_idx_pos])
-        target.append(data[i + seq_len + pred_distance, target_idx_pos])
+    for i in range(data.shape[0] - pred_distance):
+        if i+1 >= seq_len:
+            feature.append(data[i+1-seq_len:i+1, 0:target_idx_pos])
+            target.append(data[i + pred_distance, target_idx_pos])
 
     return np.array(feature), np.array(target)

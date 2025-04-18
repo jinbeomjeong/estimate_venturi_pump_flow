@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import pandas as pd
-from tensorflow.python.ops.numpy_ops import array
 
 from tqdm.auto import tqdm
 

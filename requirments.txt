@@ -1,7 +1,0 @@
-graphviz
-pandas
-lightgbm
-scikit-learn
-seaborn
-tqdm
-jupyter

@@ -134,7 +134,7 @@ def load_dataset_v2(file_path_list: list) -> pd.DataFrame:
 def create_lstm_dataset(data: np.array, seq_len=1, pred_distance=0, target_idx_pos=1):
     feature, target = [], []
 
-    for i in range(data.shape[0] - pred_distance):
+    for i in tqdm(range(data.shape[0] - pred_distance)):
         if i+1 >= seq_len:
             feature.append(data[i+1-seq_len:i+1, 0:target_idx_pos])
 

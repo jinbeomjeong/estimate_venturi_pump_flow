@@ -139,6 +139,20 @@ def create_lstm_dataset(data: np.array, seq_len=1, pred_distance=0, target_idx_p
             feature.append(data[i+1-seq_len:i+1, 0:target_idx_pos])
 
             if target_idx_pos >= 0:
-                target.append(data[i + pred_distance, target_idx_pos])
+                target.append(data[i + pred_distance, target_idx_pos:])
+
+    return np.array(feature), np.array(target)  # data shape(n_samples, seq_len, n_features), seq len=[t-29, t-28, t-27,..., t0]
+
+
+def create_seq_2_seq_dataset(data: np.array, seq_len=1, target_idx_pos=1):
+    feature, target = [], []
+
+    for i in tqdm(range(data.shape[0]), desc='creating LSTM dataset...'):
+        if i+1 >= seq_len:
+            seq_data = data[i+1-seq_len:i+1, :]
+
+            if target_idx_pos >= 0:
+                feature.append(seq_data[:, 0:target_idx_pos])
+                target.append(seq_data[:, target_idx_pos:])
 
     return np.array(feature), np.array(target)

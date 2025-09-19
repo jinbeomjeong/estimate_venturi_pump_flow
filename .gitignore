@@ -125,3 +125,6 @@ dmypy.json
 
 # pycharm environment
 .idea
+
+# tensorboard logs
+logs

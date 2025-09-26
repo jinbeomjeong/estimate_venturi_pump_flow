@@ -1,57 +1,145 @@
+import numpy as np
 import tensorflow as tf
 
 from tensorflow import keras
-from utils.miscellaneous import count_divisions_by_two
+from utils.sub_layer import conv_1d_1x1, conv_1d_1x3, conv_1d_1x5, conv_1d_1x7, max_pool_1d_to_1x1
+from utils.sub_layer import conv_2d_1x1, conv_2d_1x3, conv_2d_1x5, max_pool_2d_to_1x1
 
 
-def conv_1x1(output_dim=8, dropout_rate=0.2):
-    model = keras.Sequential([
-        keras.layers.Conv1D(filters=output_dim, kernel_size=1, activation=None, padding='same'),
-        keras.layers.BatchNormalization(),
-        keras.layers.Activation('gelu'),
-        keras.layers.Dropout(dropout_rate)
-    ])
-    return model
+class PositionalEncoding(keras.layers.Layer):
+    def __init__(self, position, d_model, **kwargs):
+        """
+        포지셔널 인코딩 레이어를 초기화합니다.
 
-def conv_1x3(hidden_dim=4, output_dim=8, dropout_rate=0.2):
-    model = keras.Sequential([
-        keras.layers.Conv1D(filters=hidden_dim, kernel_size=1, activation=None, padding='same'),
-        keras.layers.BatchNormalization(),
-        keras.layers.Activation('gelu'),
-        keras.layers.Dropout(dropout_rate),
-        keras.layers.Conv1D(filters=output_dim, kernel_size=3, activation=None, padding='same'),
-        keras.layers.BatchNormalization(),
-        keras.layers.Activation('gelu'),
-        keras.layers.Dropout(dropout_rate)
-    ])
-    return model
+        Args:
+            position (int): 시퀀스의 최대 길이 (최대 문장 길이)
+            d_model (int): 임베딩 벡터의 차원
+        """
+        super(PositionalEncoding, self).__init__(**kwargs) # **kwargs 전달
+        self.position = position
+        self.d_model = d_model
+        self.pos_encoding = self.positional_encoding(position, d_model)
 
-def conv_1x5(hidden_dim=4, output_dim=8, dropout_rate=0.2):
-    model = keras.Sequential([
-        keras.layers.Conv1D(filters=hidden_dim, kernel_size=1, activation=None, padding='same'),
-        keras.layers.BatchNormalization(),
-        keras.layers.Activation('gelu'),
-        keras.layers.Dropout(dropout_rate),
-        keras.layers.Conv1D(filters=output_dim, kernel_size=5, activation=None, padding='same'),
-        keras.layers.BatchNormalization(),
-        keras.layers.Activation('gelu'),
-        keras.layers.Dropout(dropout_rate)
-    ])
-    return model
+    def get_angles(self, position, i, d_model):
+        """
+        각도 계산을 위한 내부 함수
+        """
+        angles = 1 / np.power(10000, (2 * (i // 2)) / np.float32(d_model))
+        return position * angles
 
-def max_pool_to_1x1(output_dim=8, dropout_rate=0.2):
-    model = keras.Sequential([
-        keras.layers.MaxPooling1D(pool_size=3, strides=1, padding='same'),
-        keras.layers.Conv1D(filters=output_dim, kernel_size=1, activation=None, padding='same'),
-        keras.layers.BatchNormalization(),
-        keras.layers.Activation('gelu'),
-        keras.layers.Dropout(dropout_rate)
-    ])
-    return model
+    def positional_encoding(self, position, d_model):
+        """
+        포지셔널 인코딩 행렬을 생성합니다.
+        """
+        angle_rads = self.get_angles(np.arange(position)[:, np.newaxis],
+                                     np.arange(d_model)[np.newaxis, :],
+                                     d_model)
 
-class InceptionBlock(keras.layers.Layer):
-    def __init__(self, output_dim_1x1=64, hidden_dim_3x3=96, output_dim_3x3=128, hidden_dim_5x5=16, output_dim_5x5=32, output_dim_max_pool=32, dropout_rate=0.2, **kwargs):
-        super(InceptionBlock, self).__init__(**kwargs)
+        # 짝수 인덱스에는 사인 함수 적용
+        angle_rads[:, 0::2] = np.sin(angle_rads[:, 0::2])
+        # 홀수 인덱스에는 코사인 함수 적용
+        angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
+
+        pos_encoding = angle_rads[np.newaxis, ...]
+        return tf.cast(pos_encoding, dtype=tf.float32)
+
+    def call(self, inputs):
+        """
+        레이어의 정방향 계산을 수행합니다.
+        입력 텐서에 포지셔널 인코딩을 더합니다.
+        """
+        return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]
+
+    def get_config(self):
+        config = super(PositionalEncoding, self).get_config()
+        config.update({'position': self.position,
+                       'd_model': self.d_model})
+
+        return config
+
+
+class InceptionBlock1D(keras.layers.Layer):
+    def __init__(self, output_dim_1x1=64, hidden_dim_3x3=96, output_dim_3x3=128, hidden_dim_5x5=16, output_dim_5x5=32,
+                 hidden_dim_7x7=24, output_dim_7x7=32, output_dim_max_pool=32, dropout_rate=0.2, **kwargs):
+        super(InceptionBlock1D, self).__init__(**kwargs)
+        self.output_dim_1x1 = output_dim_1x1
+        self.hidden_dim_3x3 = hidden_dim_3x3
+        self.output_dim_3x3 = output_dim_3x3
+        self.hidden_dim_5x5 = hidden_dim_5x5
+        self.output_dim_5x5 = output_dim_5x5
+        self.hidden_dim_7x7 = hidden_dim_7x7
+        self.output_dim_7x7 = output_dim_7x7
+        self.output_dim_max_pool = output_dim_max_pool
+        self.dropout_rate = dropout_rate
+
+        self.conv_1x1 = conv_1d_1x1(output_dim=self.output_dim_1x1, dropout_rate=self.dropout_rate)
+        self.conv_3x3 = conv_1d_1x3(hidden_dim=self.hidden_dim_3x3, output_dim=self.output_dim_3x3, dropout_rate=self.dropout_rate)
+        self.conv_5x5 = conv_1d_1x5(hidden_dim=self.hidden_dim_5x5, output_dim=self.output_dim_5x5, dropout_rate=self.dropout_rate)
+        self.conv_7x7 = conv_1d_1x7(hidden_dim=self.hidden_dim_7x7, output_dim=self.output_dim_7x7)
+        self.max_pool = max_pool_1d_to_1x1(output_dim=self.output_dim_max_pool, dropout_rate=self.dropout_rate)
+
+    def call(self, inputs_layer):
+        output_layer_1 = self.conv_1x1(inputs_layer)
+        output_layer_2 = self.conv_3x3(inputs_layer)
+        output_layer_3 = self.conv_5x5(inputs_layer)
+        output_layer_4 = self.conv_7x7(inputs_layer)
+        output_layer_5 = self.max_pool(inputs_layer)
+
+        return keras.layers.concatenate(inputs=[output_layer_1, output_layer_2, output_layer_3, output_layer_4, output_layer_5], axis=2)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'output_dim_1x1': self.output_dim_1x1, 'hidden_dim_3x3': self.hidden_dim_3x3, 'output_dim_3x3': self.output_dim_3x3,
+                       'hidden_dim_5x5': self.hidden_dim_5x5, 'output_dim_5x5': self.output_dim_5x5,
+                       'output_dim_max_pool': self.output_dim_max_pool, 'dropout_rate': self.dropout_rate})
+
+        return config
+
+
+class TransformerEncoderBlock(keras.layers.Layer):
+    def __init__(self, head_size, num_heads, ff_dim, dropout_rate=0.1, **kwargs):
+        super().__init__(**kwargs)
+        self.head_size = head_size
+        self.num_heads = num_heads
+        self.ff_dim = ff_dim
+        self.dropout_rate = dropout_rate
+
+        self.attention = keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=head_size)
+        self.dropout1 = keras.layers.Dropout(dropout_rate)
+        self.norm1 = keras.layers.LayerNormalization(epsilon=1e-6)
+
+        self.ffn_dense1 = keras.layers.Dense(ff_dim, activation="gelu")
+        self.ffn_dense2 = keras.layers.Dense(head_size, activation="linear")
+        self.dropout2 = keras.layers.Dropout(dropout_rate)
+        self.norm2 = keras.layers.LayerNormalization(epsilon=1e-6)
+
+    def call(self, inputs):
+        attention_output = self.attention(query=inputs, value=inputs, key=inputs)
+        attention_output = self.dropout1(attention_output)
+        out1 = inputs + attention_output
+        norm_out1 = self.norm1(out1)
+
+        ffn_output = self.ffn_dense1(norm_out1)
+        ffn_output = self.ffn_dense2(ffn_output)
+        ffn_output = self.dropout2(ffn_output)
+        ffn_output = norm_out1 + ffn_output
+        ffn_output = self.norm2(ffn_output)
+
+        return ffn_output
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'head_size': self.head_size,
+                       'num_heads': self.num_heads,
+                       'ff_dim': self.ff_dim,
+                       'dropout_rate': self.dropout_rate})
+
+        return config
+
+class InceptionBlock2D(keras.layers.Layer):
+    def __init__(self, output_dim_1x1=64, hidden_dim_3x3=96, output_dim_3x3=128, hidden_dim_5x5=16, output_dim_5x5=32, output_dim_max_pool=32,
+                 dropout_rate=0.2, **kwargs):
+        super(InceptionBlock2D, self).__init__(**kwargs)
         self.output_dim_1x1 = output_dim_1x1
         self.hidden_dim_3x3 = hidden_dim_3x3
         self.output_dim_3x3 = output_dim_3x3
@@ -60,56 +148,30 @@ class InceptionBlock(keras.layers.Layer):
         self.output_dim_max_pool = output_dim_max_pool
         self.dropout_rate = dropout_rate
 
-        self.conv_1x1 = conv_1x1(output_dim=self.output_dim_1x1, dropout_rate=self.dropout_rate)
-        self.conv_3x3 = conv_1x3(hidden_dim=self.hidden_dim_3x3, output_dim=self.output_dim_3x3, dropout_rate=self.dropout_rate)
-        self.conv_5x5 = conv_1x5(hidden_dim=self.hidden_dim_5x5, output_dim=self.output_dim_5x5, dropout_rate=self.dropout_rate)
-        self.max_pool = max_pool_to_1x1(output_dim=self.output_dim_max_pool, dropout_rate=self.dropout_rate)
-
-    def build(self, input_shape):
-        super(InceptionBlock, self).build(input_shape)
+        self.conv_1x1 = conv_2d_1x1(output_dim=self.output_dim_1x1, dropout_rate=self.dropout_rate)
+        self.conv_3x3 = conv_2d_1x3(hidden_dim=self.hidden_dim_3x3, output_dim=self.output_dim_3x3, dropout_rate=self.dropout_rate)
+        self.conv_5x5 = conv_2d_1x5(hidden_dim=self.hidden_dim_5x5, output_dim=self.output_dim_5x5, dropout_rate=self.dropout_rate)
+        self.max_pool = max_pool_2d_to_1x1(output_dim=self.output_dim_max_pool, dropout_rate=self.dropout_rate)
 
     def call(self, inputs_layer):
+
         output_layer_1 = self.conv_1x1(inputs_layer)
         output_layer_2 = self.conv_3x3(inputs_layer)
         output_layer_3 = self.conv_5x5(inputs_layer)
         output_layer_4 = self.max_pool(inputs_layer)
 
-        return keras.layers.concatenate(inputs=[output_layer_1, output_layer_2, output_layer_3, output_layer_4], axis=2)
+        result = keras.layers.concatenate(inputs=[output_layer_1, output_layer_2, output_layer_3, output_layer_4], axis=1)
+
+        return result
 
     def get_config(self):
-        config = super(InceptionBlock, self).get_config()
+        config = super().get_config()
         config.update({'output_dim_1x1': self.output_dim_1x1, 'hidden_dim_3x3': self.hidden_dim_3x3, 'output_dim_3x3': self.output_dim_3x3,
                        'hidden_dim_5x5': self.hidden_dim_5x5, 'output_dim_5x5': self.output_dim_5x5, 'output_dim_max_pool': self.output_dim_max_pool,
                        'dropout_rate': self.dropout_rate})
 
         return config
 
-
-def differencing_with_padding(x):
-    # 1. 차분 계산 (결과 shape: (batch, 29, 1))
-    diff = x[:, 1:, :] - x[:, :-1, :]
-
-    # 2. 패딩용 텐서 생성 (shape: (batch, 1, 1))
-    # 입력 x와 동일한 배치, 피처 크기를 갖는 0 텐서를 생성
-    padding = keras.ops.zeros_like(x[:, :1, :])
-
-    # 3. 패딩과 차분 결과를 시간 축(axis=1)을 기준으로 합침
-    return keras.layers.Concatenate(axis=1)([padding, diff])
-
-
-def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0.1):
-    """트랜스포머 인코더 블록"""
-    # Multi-Head Self-Attention
-    x = keras.layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(inputs, inputs)
-    x = keras.layers.LayerNormalization(epsilon=1e-6)(x + inputs) # Add & Norm
-
-    # Position-wise Feed-Forward Network
-    ff_out = keras.layers.Dense(units=ff_dim, activation="gelu")(x)
-    ff_out = keras.layers.Dropout(dropout)(ff_out)
-    ff_out = keras.layers.Dense(units=head_size)(ff_out)
-    x = keras.layers.LayerNormalization(epsilon=1e-6)(x + ff_out) # Add & Norm
-
-    return x
 
 class DecompositionLayer(keras.layers.Layer):
     """
@@ -131,72 +193,3 @@ class DecompositionLayer(keras.layers.Layer):
         config = super(DecompositionLayer, self).get_config()
         config.update({"kernel_size": self.kernel_size})
         return config
-
-
-def time_mixer_block(input_layer, pred_len=1, dropout_rate=0.2):
-    input_raw = keras.ops.expand_dims(input_layer, axis=2)
-
-    multi_scale_input_list = [input_raw]
-
-    for i in range(count_divisions_by_two(input_raw.shape[1])-1):
-        i = (i*2)+2
-        avg_layer = keras.layers.AveragePooling1D(pool_size=i, strides=i, padding='valid')(input_raw)
-        #max_layer = keras.layers.MaxPooling1D(pool_size=i, strides=i, padding='valid')(input_raw)
-        multi_scale_input_list.append(avg_layer)
-        #multi_scale_input_list.append(max_layer)
-
-    seasonal_list = []
-    trend_list = []
-
-    for multi_scale_input_layer in multi_scale_input_list:
-        seasonal, trend = DecompositionLayer(kernel_size=3)(multi_scale_input_layer)
-
-        seasonal = keras.ops.squeeze(seasonal, axis=2)
-        seasonal_output = keras.layers.Dense(units=multi_scale_input_layer.shape[1], activation='linear')(seasonal)
-        seasonal_output = keras.layers.Dropout(dropout_rate)(seasonal_output)
-        seasonal_list.append(seasonal_output)
-
-        trend = keras.ops.squeeze(trend, axis=2)
-        trend_output = keras.layers.Dense(units=multi_scale_input_layer.shape[1], activation='linear')(trend)
-        trend_output = keras.layers.Dropout(dropout_rate)(trend_output)
-        trend_list.append(trend_output)
-
-        #output_list.append(keras.layers.Add()([seasonal_output, trend_output]))
-
-    output_1 = seasonal_list[0]
-    seasonal_mix_list = [output_1]
-
-    for i in range(len(seasonal_list)-1):
-        output_1 = keras.layers.Dense(units=seasonal_list[i+1].shape[1], activation='linear')(output_1)
-        output_1 = keras.layers.LayerNormalization()(output_1)
-        output_1 = keras.layers.Dropout(dropout_rate)(output_1)
-        output_1 = keras.layers.Activation('gelu')(output_1) #gelu
-        output_1 = keras.layers.add([output_1, seasonal_list[i+1]])
-        seasonal_mix_list.append(output_1)
-
-    trend_list.reverse()
-    output_2 = trend_list[0]
-    trend_mix_list = [output_2]
-
-    for i in range(len(trend_list)-1):
-        output_2 = keras.layers.Dense(units=trend_list[i+1].shape[1], activation='linear')(output_2)
-        output_2 = keras.layers.LayerNormalization()(output_2)
-        output_2 = keras.layers.Dropout(dropout_rate)(output_2)
-        output_2 = keras.layers.Activation('gelu')(output_2) #gelu
-        output_2 = keras.layers.add([output_2, trend_list[i+1]])
-        trend_mix_list.append(output_2)
-
-    trend_mix_list.reverse()
-
-    mix_output_list = []
-    hidden_units = 128
-
-    for seasonal_mix_layer, trend_mix_layer in zip(seasonal_mix_list, trend_mix_list):
-        mix_output = seasonal_mix_layer+trend_mix_layer
-        mix_output = keras.layers.Dense(units=hidden_units, activation='linear')(mix_output)
-        mix_output = keras.layers.LayerNormalization()(mix_output)
-        mix_output = keras.layers.Dropout(dropout_rate)(mix_output)
-        mix_output = keras.layers.Dense(units=pred_len, activation='gelu')(mix_output) #gelu
-        mix_output_list.append(mix_output)
-
-    return keras.layers.add(mix_output_list)

@@ -6,7 +6,7 @@ from utils.metric import smape
 from utils.miscellaneous import count_divisions_by_two
 
 
-strategy = tf.distribute.MirroredStrategy(devices=["/gpu:0", "/gpu:1"])
+strategy = tf.distribute.MirroredStrategy(devices=["/gpu:0"])
 
 
 def build_model(input_shape=(1, 1), dropout_rate=0.2):
@@ -141,27 +141,23 @@ with strategy.scope():
             x_res = keras.layers.Activation('gelu')(x_res)
             x_res = keras.layers.BatchNormalization()(x_res)
 
-        #y = keras.layers.Flatten()(x_res)
-        #y = keras.layers.Dropout(dropout_rate)(y)
-        #y = keras.layers.Dense(units=input_shape[0]*3, activation='gelu')(y)
         y = keras.layers.Dense(units=16, activation='gelu')(x_res)
         y_res = keras.layers.LayerNormalization()(y)
 
         for j in range(3):
             y = keras.layers.LSTM(units=16, return_sequences=True, recurrent_dropout=dropout_rate, dropout=dropout_rate)(y_res)
-            #y = keras.layers.Dense(units=d_dims, activation='gelu')(y_res)
             y_res = y + y_res
-            #y_res = keras.layers.BatchNormalization()(y_res)
             y_res = keras.layers.LayerNormalization()(y_res)
 
-        y = keras.layers.Flatten()(y_res)
-        y = keras.ops.expand_dims(y, axis=2)
+        #y = keras.layers.Flatten()(y_res)
+        y = tf.expand_dims(y, axis=3)
 
         for i in range(2):
-            y = keras.layers.MaxPool1D(pool_size=2, strides=2, padding='valid')(y)
+            y = keras.layers.MaxPool2D(pool_size=(2, 2), strides=2, padding='valid', data_format='channels_last')(y)
 
         y = keras.layers.Flatten()(y)
-        y = keras.layers.Dense(units=output_len, activation='linear')(y)
+        y = keras.layers.LayerNormalization()(y)
+        y = keras.layers.Dense(units=output_len, activation='gelu')(y)
 
         model = keras.models.Model(inputs=input_layer, outputs=y)
 

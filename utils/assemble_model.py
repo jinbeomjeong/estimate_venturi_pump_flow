@@ -149,15 +149,19 @@ with strategy.scope():
             y_res = y + y_res
             y_res = keras.layers.LayerNormalization()(y_res)
 
-        #y = keras.layers.Flatten()(y_res)
-        y = tf.expand_dims(y, axis=3)
+        y = tf.expand_dims(y_res, axis=3)
 
         for i in range(2):
             y = keras.layers.MaxPool2D(pool_size=(2, 2), strides=2, padding='valid', data_format='channels_last')(y)
 
         y = keras.layers.Flatten()(y)
+
         y = keras.layers.LayerNormalization()(y)
-        y = keras.layers.Dense(units=output_len, activation='gelu')(y)
+        y = keras.layers.Dropout(dropout_rate)(y)
+        y = keras.layers.Dense(units=y.shape[1], activation='gelu')(y)
+
+        y = keras.layers.LayerNormalization()(y)
+        y = keras.layers.Dense(units=output_len, activation='linear')(y)
 
         model = keras.models.Model(inputs=input_layer, outputs=y)
 

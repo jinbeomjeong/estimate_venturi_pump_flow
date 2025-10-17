@@ -1,7 +1,6 @@
 import keras, tf2onnx, logging
 import tensorflow as tf
 
-from utils.layer import InceptionBlock
 from utils.metric import smape
 
 
@@ -9,8 +8,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 model_path = '../models/model.keras'
-best_model = keras.models.load_model(filepath=model_path, custom_objects={'InceptionBlock': InceptionBlock,
-                                                                      'smape': smape})
+best_model = keras.models.load_model(filepath=model_path, custom_objects={'smape': smape})
 logging.info(f'Model loaded from {model_path}')
 
 spec = (tf.TensorSpec(best_model.inputs[0].shape, tf.float32, name='input'),)

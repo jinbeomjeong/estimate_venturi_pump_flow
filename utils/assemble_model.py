@@ -5,9 +5,8 @@ from utils.model import time_mixer_block
 from utils.metric import smape
 from utils.miscellaneous import count_divisions_by_two
 
-
-strategy = tf.distribute.MirroredStrategy(devices=["/gpu:0", "/gpu:1"])
-
+strategy = tf.distribute.MirroredStrategy()
+print('number of available gpus: {}'.format(strategy.num_replicas_in_sync))
 
 def build_model(input_shape=(1, 1), dropout_rate=0.2):
     input_layer = keras.layers.Input(shape=input_shape, name='input_layer')
@@ -78,90 +77,51 @@ def build_model(input_shape=(1, 1), dropout_rate=0.2):
     return model
 
 
-
 with strategy.scope():
-    def build_time_mixer_model(input_shape, d_dims=64, output_len=1, dropout_rate=0.2, learning_rate=0.001):
-        input_layer = keras.layers.Input(shape=input_shape)
-
-        #x = keras.layers.BatchNormalization()(input_layer)
-        x = keras.ops.expand_dims(input_layer, axis=2)
-        x = keras.layers.Dense(units=d_dims, activation='gelu')(x)
-        x = keras.layers.BatchNormalization()(x)
-        x_res = x
-
-        for i in range(5):
-            dilation_rate = 2 ** i
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
-                                    dilation_rate=dilation_rate)(x_res)
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
-                                    dilation_rate=dilation_rate)(x)
-            x = keras.layers.Dropout(dropout_rate)(x)
-            x_res = keras.layers.Activation('gelu')(x + x_res)
-            x_res = keras.layers.BatchNormalization()(x_res)
-
-        y = keras.layers.Flatten()(x_res)
-        y = keras.layers.Dropout(dropout_rate)(y)
-        y = keras.layers.Dense(units=input_shape[0]*3, activation='gelu')(y)
-        y_res = y
-
-        for j in range(3):
-            y = time_mixer_block(input_layer=y_res, pred_len=input_shape[0]*3, dropout_rate=dropout_rate)
-            y_res = y + y_res
-
-        y = keras.layers.Dense(units=output_len, activation='linear')(y_res)
-        model = keras.models.Model(inputs=input_layer, outputs=y)
-
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-        model.compile(optimizer=optimizer, loss=keras.losses.logcosh,
-                      metrics=['mean_absolute_error', 'mean_absolute_percentage_error', smape])
-
-        return model
-
-
-with strategy.scope():
-    def build_model_v1(input_shape, d_dims=64, output_len=1, dropout_rate=0.2, learning_rate=0.001):
+    def build_model_v1(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.001):
         input_layer = keras.layers.Input(shape=input_shape)
 
         x = keras.layers.BatchNormalization()(input_layer)
-        x = keras.layers.Dense(units=d_dims, activation='gelu')(x)
-        x = keras.layers.BatchNormalization()(x)
-        x_res = x
+        x_res = keras.layers.Dense(units=d_dims, activation='gelu')(x)
 
         for i in range(5):
             dilation_rate = 2 ** i
+            x = keras.layers.BatchNormalization()(x_res)
             x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
-                                    dilation_rate=dilation_rate)(x_res)
+                                    dilation_rate=dilation_rate)(x)
+            x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Dropout(dropout_rate)(x)
             x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
                                     dilation_rate=dilation_rate)(x)
-            x = keras.layers.Dropout(dropout_rate)(x)
+
+            x_res = keras.layers.LayerNormalization()(x+x_res)
             x_res = keras.layers.Dropout(dropout_rate)(x_res)
-
-            x_res = keras.layers.BatchNormalization()(x+x_res)
             x_res = keras.layers.Activation('gelu')(x_res)
-            x_res = keras.layers.BatchNormalization()(x_res)
 
-        y = keras.layers.Dense(units=16, activation='gelu')(x_res)
-        y_res = keras.layers.LayerNormalization()(y)
+        y = keras.layers.LayerNormalization()(x_res)
+        y_res = keras.layers.Dense(units=16, activation='gelu')(y)
 
         for j in range(3):
             y = keras.layers.LSTM(units=16, return_sequences=True, recurrent_dropout=dropout_rate, dropout=dropout_rate)(y_res)
-            y_res = y + y_res
-            y_res = keras.layers.LayerNormalization()(y_res)
+            y_res = keras.layers.LayerNormalization()(y+y_res)
 
-        #y = keras.ops.expand_dims(y_res, axis=3)
+        y = keras.ops.expand_dims(y_res, axis=1)
+        y = keras.layers.Conv2D(filters=32, kernel_size=3, strides=(1, 1), padding='valid', data_format='channels_first', activation='gelu')(y)
+        y = keras.layers.BatchNormalization(axis=1)(y)
+        y = keras.layers.Dropout(dropout_rate)(y)
+        y = keras.layers.Conv2D(filters=64, kernel_size=3, strides=(1, 1), padding='valid', data_format='channels_first', activation='gelu')(y)
 
-        #y = keras.layers.MaxPool2D(pool_size=(2, 2), strides=2, padding='valid', data_format='channels_last')(y)
-        #y = keras.layers.MaxPool2D(pool_size=(2, 2), strides=2, padding='valid', data_format='channels_last')(y)
+        y = keras.layers.LayerNormalization(axis=1)(y)
+        y = keras.layers.Dropout(dropout_rate)(y)
+        y = keras.layers.Activation('gelu')(y)
+
+        for k in range(3):
+            y = keras.layers.MaxPool2D(pool_size=(2, 2), strides=2, padding='valid', data_format='channels_first')(y)
 
         y = keras.layers.Flatten()(y)
-
         y = keras.layers.LayerNormalization()(y)
-        #y = keras.layers.Dropout(dropout_rate)(y)
-        #y = keras.layers.Dense(units=y.shape[1], activation='gelu')(y)
-
-        #y = keras.layers.LayerNormalization()(y)
-        y = keras.ops.mean(y, axis=1)
+        y = keras.layers.Dense(units=y.shape[1], activation='linear')(y)
+        y = keras.layers.Dense(units=1, activation='linear')(y)
 
         model = keras.models.Model(inputs=input_layer, outputs=y)
 

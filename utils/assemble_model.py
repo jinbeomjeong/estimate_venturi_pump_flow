@@ -120,7 +120,8 @@ with strategy.scope():
 
         y = keras.layers.Flatten()(y)
         y = keras.layers.LayerNormalization()(y)
-        y = keras.layers.Dense(units=y.shape[1], activation='linear')(y)
+        y = keras.layers.Dense(units=1024, activation='gelu')(y)
+        y = keras.layers.Dropout(dropout_rate)(y)
         y = keras.layers.Dense(units=1, activation='linear')(y)
 
         model = keras.models.Model(inputs=input_layer, outputs=y)

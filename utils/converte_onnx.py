@@ -7,7 +7,7 @@ from utils.metric import smape
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-model_path = '../models/model.keras'
+model_path = '../models/model_251020_v1.keras'
 best_model = keras.models.load_model(filepath=model_path, custom_objects={'smape': smape})
 logging.info(f'Model loaded from {model_path}')
 

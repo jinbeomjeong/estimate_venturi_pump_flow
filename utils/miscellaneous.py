@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.interpolate import CubicSpline
+from tqdm.auto import tqdm
 
 
 def time_warp(series, sigma=0.2, knots=4):
@@ -34,24 +35,28 @@ def time_warp(series, sigma=0.2, knots=4):
     return warped_series
 
 
+def create_seq_dataset_multiple_input_single_output(data: np.array, seq_len=1, pred_distance=0, target_idx_pos=1):
+    feature, target = [], []
+
+    for i in tqdm(range(data.shape[0] - pred_distance), desc='creating sequence dataset...'):
+        if i+1 >= seq_len:
+            feature.append(data[i+1-seq_len:i+1, 0:target_idx_pos])
+
+            if target_idx_pos >= 0:
+                target.append(data[i + pred_distance, target_idx_pos:])
+
+    return np.array(feature), np.array(target)  # data shape(n_samples, seq_len, n_features), seq len=[t-29, t-28, t-27,..., t0]
+
+
 def count_divisions_by_two(number):
-    """
-    주어진 숫자를 2로 몇 번 나눌 수 있는지 계산합니다. (반복문 사용)
-
-    Args:
-        number (int): 확인할 정수.
-
-    Returns:
-        int: 2로 나눌 수 있는 횟수.
-    """
-    # 0 또는 음수는 처리하지 않으므로 0을 반환합니다.
-    if number <= 0:
-        return 0
-
     count = 0
-    # 숫자가 2로 나누어떨어지는 동안 반복합니다.
-    while number % 2 == 0:
-        number //= 2  # number를 2로 나눈 몫으로 업데이트합니다.
-        count += 1  # 횟수를 1 증가시킵니다.
+
+    while True:
+        if number >= 2:
+            number //= 2
+            count += 1
+
+        else:
+            break
 
     return count

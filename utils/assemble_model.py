@@ -81,14 +81,14 @@ with strategy.scope():
     def build_reg_model(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.001):
         input_layer = keras.layers.Input(shape=input_shape)
 
-        x = keras.layers.LayerNormalization()(input_layer)
+        x = keras.layers.BatchNormalization()(input_layer)
 
         x = keras.layers.Dense(units=d_dims, activation='gelu')(x)
         x = keras.layers.Permute((2, 1))(x)
         x = keras.layers.Dense(units=input_shape[0]*2, activation='linear')(x)
         x = keras.layers.Permute((2, 1))(x)
 
-        x_res = keras.layers.LayerNormalization()(x)
+        x_res = keras.layers.BatchNormalization()(x)
 
         for i in range(count_divisions_by_two(input_shape[0])+1):
             dilation_rate = 2 ** i

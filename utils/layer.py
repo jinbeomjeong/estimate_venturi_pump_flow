@@ -187,9 +187,29 @@ class DecompositionLayer(keras.layers.Layer):
         seasonal = x - trend
         return seasonal, trend
 
-    # 💡 아래 메서드를 추가하여 오류를 해결합니다.
     def get_config(self):
         """레이어의 설정을 직렬화(serialize)하기 위해 호출됩니다."""
         config = super(DecompositionLayer, self).get_config()
         config.update({"kernel_size": self.kernel_size})
         return config
+
+
+class FeatureWiseScalingLayer(keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.activation = keras.layers.Activation('gelu')
+        self.scaling_vector = None
+
+    def build(self, input_shape):
+        feature_dim = input_shape[-1]
+        self.scaling_vector = self.add_weight(shape=(feature_dim,), initializer='ones', trainable=True)
+        super().build(input_shape)
+
+    def call(self, inputs):
+        y = self.activation(self.scaling_vector)
+        y = inputs * y
+
+        return y
+
+    def compute_output_shape(self, input_shape):
+        return input_shape

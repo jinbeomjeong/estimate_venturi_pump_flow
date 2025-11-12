@@ -1,0 +1,11 @@
+[Unit]
+Description=flowrate_estimation_app
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/workspace/estimate_venturi_pump_flow
+ExecStart=/home/pi/workspace/estimate_venturi_pump_flow/main_start.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

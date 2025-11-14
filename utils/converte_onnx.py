@@ -6,7 +6,7 @@ from utils.layer import FeatureWiseScalingLayer, DecompositionLayer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-seq_len = 10
+seq_len = 20
 model_path = f'../models/model_{seq_len}.keras'
 model = keras.models.load_model(model_path, custom_objects={'FeatureWiseScalingLayer': FeatureWiseScalingLayer,
                                                             'DecompositionLayer': DecompositionLayer})

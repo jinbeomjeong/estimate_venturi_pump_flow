@@ -80,7 +80,10 @@ def build_model(input_shape=(1, 1), dropout_rate=0.2):
 with strategy.scope():
     def build_reg_model(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.001):
         input_layer = keras.layers.Input(shape=input_shape)
-        x = keras.layers.BatchNormalization()(input_layer)
+        x1 = keras.layers.BatchNormalization()(input_layer[:, :, 0:2])
+        x2 = keras.layers.LayerNormalization()(input_layer[:, :, 2:])
+        x = keras.layers.concatenate([x1, x2], axis=2)
+
         x_res = keras.layers.Dense(units=d_dims, activation='gelu')(x)
 
         for i in range(count_divisions_by_two(input_shape[0])+1):

@@ -1,4 +1,5 @@
-import time, threading, datetime, logging, joblib, struct
+import time, threading, datetime, logging, struct
+import onnxruntime as ort
 import RPi.GPIO as GPIO
 import numpy as np
 import pandas as pd
@@ -17,14 +18,12 @@ np.set_printoptions(precision=2, suppress=True)
 value_lock = threading.Lock()
 trigger_sig = 0
 t0_period = time.perf_counter()
-pressure_sensor_arr = np.zeros(shape=4, dtype=np.float32)
-rpm_indicator_arr = np.zeros(shape=2, dtype=np.float32)
-flowrate_indicator_arr = np.zeros(shape=2, dtype=np.float32)
+pressure_sensor_arr = np.zeros(shape=2, dtype=np.float32)
+rpm_indicator_arr = np.zeros(shape=1, dtype=np.float32)
+flowrate_indicator_arr = np.zeros(shape=1, dtype=np.float32)
 logging_data = pd.DataFrame()
-data_name_list = ['time(sec)', 'pump_1_inlet_pressure(kpa)', 'pump_1_outlet_pressure(kpa)',
-                  'pump_2_inlet_pressure(kpa)', 'pump_2_outlet_pressure(kpa)',
-                  'pump_1_speed(rpm)', 'pump_2_speed(rpm)',
-                  'pump_1_flowrate(lpm)', 'pump_2_flowrate(lpm)']
+data_name_list = ['time(sec)', 'pump_inlet_pressure(bar)', 'pump_outlet_pressure(bar)',
+                  'pump_speed(rpm)', 'venturi_flowrate(lpm)', 'estimation_flowrate(lpm)']
 
 def pressure_sensor_model(signal=0.0, mode='positive') -> float:
     pressure = 0  # unit: kPa
@@ -56,21 +55,15 @@ def modbus_com():
     logger.info("modbus client initialized!")
 
     while True:
-        analog_sensor_response = sensor_client.read_input_registers(address=0x00, count=4, device_id=1)
+        analog_sensor_response = sensor_client.read_input_registers(address=0x00, count=2, device_id=1)
         analog_sensor_payload = analog_sensor_response.registers
 
         with value_lock:
             pressure_sensor_arr[0] = pressure_sensor_model(analog_sensor_payload[0] / 1000, mode='negative')
-            pressure_sensor_arr[0] = pressure_sensor_arr[0] + 5.3  ## sensor calibration(unit: kpa)
+            pressure_sensor_arr[0] = pressure_sensor_arr[0]+5  ## sensor calibration(unit: kpa)
+            pressure_sensor_arr[0] = pressure_sensor_arr[0]/100  # unit: bar
 
-            pressure_sensor_arr[1] = pressure_sensor_model(analog_sensor_payload[1] / 1000, mode='positive')
-            pressure_sensor_arr[1] = pressure_sensor_arr[1] + 2
-
-            pressure_sensor_arr[2] = pressure_sensor_model(analog_sensor_payload[2] / 1000, mode='negative')
-            pressure_sensor_arr[2] = pressure_sensor_arr[2] + 4.4
-
-            pressure_sensor_arr[3] = pressure_sensor_model(analog_sensor_payload[3] / 1000, mode='positive')
-            pressure_sensor_arr[3] = pressure_sensor_arr[3] + 3
+            pressure_sensor_arr[1] = ((analog_sensor_payload[1] / 1000)*1.25)-5  # unit: bar
 
         # time.sleep(0.001)
 
@@ -83,19 +76,18 @@ def modbus_com():
             rpm_indicator_arr[0] = rpm_indicator_1_payload[0]
         # time.sleep(0.001)
 
-        # rpm_indicator_2_response = sensor_client.read_input_registers(address=0x3E9, count=1, device_id=3)
-        # rpm_indicator_2_payload = rpm_indicator_2_response.registers
-        # rpm_indicator_arr[1] = rpm_indicator_2_payload[0]
-        # time.sleep(0.001)
+        flowrate_indicator_1_response = sensor_client.read_holding_registers(address=0x500-1, count=2, device_id=4)
+        flowrate_indicator_1_payload = flowrate_indicator_1_response.registers
 
-        # flowrate_indicator_1_response = sensor_client.read_holding_registers(address=0x500-1, count=1, device_id=4)
-        # flowrate_indicator_1_data = flowrate_indicator_1_response.registers
-        # flowrate_indicator_arr[0] = flowrate_indicator_1[0]
-        # time.sleep(0.001)
+        high_byte = flowrate_indicator_1_payload[0] << 16
+        int_val = high_byte | flowrate_indicator_1_payload[1]
 
-        # flowrate_indicator_2_response = sensor_client.read_holding_registers(address=0x500-1, count=1, device_id=5)
-        # flowrate_indicator_2_data = flowrate_indicator_2_response.registers
-        # flowrate_indicator_arr[1] = flowrate_indicator_2[0]
+        pack_byte = struct.pack('I', int_val)
+        flowrate_indicator_1_data = struct.unpack('f', pack_byte)[0]
+
+        with value_lock:
+            flowrate_indicator_arr[0] = flowrate_indicator_1_data
+
         # time.sleep(0.001)
 
 
@@ -135,7 +127,7 @@ def write_log_data():
             log_data.to_csv(path_or_buf=log_file_name, mode='a', header=False)
 
         t_elapsed = time.perf_counter() - t_start
-        sleep_time = 0.1 - t_elapsed
+        sleep_time = 0.2 - t_elapsed
 
         if sleep_time > 0:
             time.sleep(sleep_time)
@@ -156,37 +148,39 @@ def main_loop():
     GPIO.output(LED0, GPIO.HIGH)
     GPIO.output(LED1, GPIO.HIGH)
 
-    BROKER_ADDRESS = "localhost"
+    BROKER_ADDRESS = 'localhost'
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
     system_time_topic = "system/time"
     venturi_pump_flowrate_predict_topic = "venturi_pump/flowrate/predict"
     venturi_pump_flowrate_gt_topic = "venturi_pump/flowrate/ground_truth"
 
-    model = joblib.load('lgb_model.pkl')
+    seq_len = 20
+    model = ort.InferenceSession(f'models/model_{seq_len}.onnx')
+
     logger.info("regression model loaded!")
 
-    input_data = np.zeros(shape=1, dtype=np.float32).reshape(1, -1)
+    input_buf = np.zeros(shape=(1, seq_len, 3), dtype=np.float32)
     led_state = True
     t0 = time.perf_counter()
 
-    output_led_client = ModbusSerialClient(port='/dev/ttyS0',
-                                           framer=FramerType.RTU,
-                                           baudrate=19200,
-                                           bytesize=8,
-                                           parity='N',
-                                           stopbits=1,
-                                           timeout=0.5,
-                                           retries=5)
-    output_led_client.connect()
-    output_led_client.write_register(device_id=1, address=0x0, value=1)  # zero blanking
-    logger.info("Output LED COM. initialized!")
+    # output_led_client = ModbusSerialClient(port='/dev/ttyS0',
+    #                                        framer=FramerType.RTU,
+    #                                        baudrate=19200,
+    #                                        bytesize=8,
+    #                                        parity='N',
+    #                                        stopbits=1,
+    #                                        timeout=0.5,
+    #                                        retries=5)
+    # output_led_client.connect()
+    # output_led_client.write_register(device_id=1, address=0x0, value=1)  # zero blanking
+    # logger.info("Output LED COM. initialized!")
 
     # start thread for modbus com
-    # modbus_com_thread = threading.Thread(target=modbus_com)
-    # modbus_com_thread.daemon = True
-    # modbus_com_thread.start()
-    # logger.info("modbus com thread started!")
+    modbus_com_thread = threading.Thread(target=modbus_com)
+    modbus_com_thread.daemon = True
+    modbus_com_thread.start()
+    logger.info("modbus com thread started!")
 
     # start thread for write log data
     log_data_thread = threading.Thread(target=write_log_data)
@@ -224,18 +218,18 @@ def main_loop():
         else:
             GPIO.output(LED0, GPIO.LOW)
 
-        #print(pressure_sensor_arr)
-        #print(rpm_indicator_arr)
+        input_buf = np.roll(a=input_buf, shift=-1, axis=1)
+        input_buf[0, -1, :] = np.concatenate([pressure_arr, rpm_arr], axis=0)
 
-        #if rpm_arr[0] > 1100:
-        pred_output = model.predict(pd.DataFrame(np.array([rpm_arr[0]]), columns=['PumpSpeed(RPM)']),
-                                    num_iteration=model.best_iteration_)
+        est_flow = np.squeeze(model.run(output_names=None, input_feed={'input': input_buf})).item()
+
+        if rpm_arr[0] <= 10:
+            est_flow = 0
+
         pred_output = 99999
         pred_output = np.clip(pred_output, 1, 99999)
-        #noise = np.random.normal(loc=0, scale=50)
-        #pred_output = pred_output + noise
 
-        output_led_client.write_registers(device_id=1, address=0x1, values=value_to_reg(int(pred_output)))
+        # output_led_client.write_registers(device_id=1, address=0x1, values=value_to_reg(int(pred_output)))
 
         client.publish(topic=system_time_topic, payload=struct.pack('<f', relative_time))
         client.publish(topic=venturi_pump_flowrate_predict_topic, payload=struct.pack('<f', pred_output))
@@ -246,23 +240,25 @@ def main_loop():
             logging_data = pd.DataFrame(data={data_name_list[0]: round(relative_time, 3),
                                               data_name_list[1]: round(pressure_arr[0].item(), 3),
                                               data_name_list[2]: round(pressure_arr[1].item(), 3),
-                                              data_name_list[3]: round(pressure_arr[2].item(), 3),
-                                              data_name_list[4]: round(pressure_arr[3].item(), 3),
-                                              data_name_list[5]: round(rpm_arr[0].item(), 3),
-                                              data_name_list[6]: round(rpm_arr[1].item(), 3),
-                                              data_name_list[7]: round(flowrate_arr[0].item(), 3),
-                                              data_name_list[8]: round(flowrate_arr[1].item(), 3)}, index=[0])
+                                              data_name_list[3]: round(rpm_arr[0].item(), 3),
+                                              data_name_list[4]: round(flowrate_arr[0].item(), 3),
+                                              data_name_list[5]: round(est_flow, 3)}, index=[0])
 
         period_time = time.perf_counter() - prv_time
 
-        if period_time >= 0.09:
+        if period_time >= 0.5:
             delay_time = 0
         else:
-            delay_time = 0.09 - period_time
+            delay_time = 0.5 - period_time
 
         time.sleep(delay_time)
+
         logger.info(f"main loop period: {(time.perf_counter() - prv_time) * 1000:.1f}msec")
         logger.info(f"main loop calculation period: {period_time * 1000:.1f}msec")
+
+        print(pressure_arr)
+        print(rpm_arr)
+        print(est_flow, flowrate_arr[0])
 
 if __name__ == "__main__":
     main_loop()

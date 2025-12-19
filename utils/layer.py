@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
+import keras
 
-from tensorflow import keras
 from utils.sub_layer import conv_1d_1x1, conv_1d_1x3, conv_1d_1x5, conv_1d_1x7, max_pool_1d_to_1x1
 from utils.sub_layer import conv_2d_1x1, conv_2d_1x3, conv_2d_1x5, max_pool_2d_to_1x1
 
@@ -172,7 +172,7 @@ class InceptionBlock2D(keras.layers.Layer):
 
         return config
 
-
+#@keras.saving.register_keras_serializable()
 class DecompositionLayer(keras.layers.Layer):
     """
     이동 평균을 사용하여 시계열을 추세와 계절성 성분으로 분해합니다.
@@ -185,12 +185,38 @@ class DecompositionLayer(keras.layers.Layer):
     def call(self, x):
         trend = self.avg(x)
         seasonal = x - trend
+
         return seasonal, trend
 
     def get_config(self):
-        """레이어의 설정을 직렬화(serialize)하기 위해 호출됩니다."""
         config = super(DecompositionLayer, self).get_config()
         config.update({"kernel_size": self.kernel_size})
+
+        return config
+
+
+#@keras.saving.register_keras_serializable()
+class ScalingLayer(keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.scale_vector = None
+        self.activation = keras.layers.Activation('gelu')
+
+    def build(self, input_shape):
+        self.scale_vector = self.add_weight(shape=(input_shape[-1],), initializer='ones', trainable=True)
+        super().build(input_shape)
+
+    def call(self, inputs):
+        y = inputs * self.scale_vector
+
+        return self.activation(y)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+    def get_config(self):
+        config = super(ScalingLayer, self).get_config()
+
         return config
 
 
@@ -206,8 +232,8 @@ class FeatureWiseScalingLayer(keras.layers.Layer):
         super().build(input_shape)
 
     def call(self, inputs):
-        y = self.activation(self.scaling_vector)
-        y = inputs * y
+        y = inputs*self.scaling_vector
+        y = self.activation(y)
 
         return y
 

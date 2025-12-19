@@ -1,7 +1,8 @@
 import tensorflow as tf
 from tensorflow import keras
-from utils.layer import InceptionBlock1D, FeatureWiseScalingLayer
-from utils.metric import smape
+from utils.model import time_mixer_block
+from utils.layer import InceptionBlock1D, ScalingLayer, FeatureWiseScalingLayer
+from utils.metric import smape, WeightedMaeMapeLoss
 from utils.miscellaneous import count_divisions_by_two
 
 
@@ -98,10 +99,10 @@ with strategy.scope():
             x_res = keras.layers.Activation('gelu')(x_res)
 
         y = keras.layers.Flatten()(x_res)
-        y = keras.layers.LayerNormalization()(y)
         y = keras.layers.Dropout(dropout_rate)(y)
 
         y = FeatureWiseScalingLayer()(y)
+        y = keras.layers.Dropout(dropout_rate)(y)
         y = keras.layers.Dense(units=1, activation='linear')(y)
 
         model = keras.models.Model(inputs=input_layer, outputs=y)

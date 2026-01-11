@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow import keras
 from utils.model import time_mixer_block
-from utils.layer import InceptionBlock1D, ScalingLayer, FeatureWiseScalingLayer
+from utils.layer import InceptionBlock1D, ScalingLayer, FeatureWiseScalingLayer, gelu_approximate
 from utils.metric import smape, WeightedMaeMapeLoss
 from utils.miscellaneous import count_divisions_by_two
 
@@ -79,26 +79,27 @@ def build_model(input_shape=(1, 1), dropout_rate=0.2):
 
 
 with strategy.scope():
-    def build_reg_model(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.001):
+    def build_reg_model(input_shape, pressure_scale=(0, 1), d_dims=64, dropout_rate=0.2, learning_rate=0.001):
         input_layer = keras.layers.Input(shape=input_shape)
-        x1 = keras.layers.BatchNormalization()(input_layer[:, :, 0:2])
-        x2 = keras.layers.LayerNormalization()(input_layer[:, :, 2:])
+        x1 = keras.layers.Rescaling(scale=pressure_scale[0], offset=pressure_scale[1])(input_layer[:, :, 0:2])
+        x2 = keras.layers.GroupNormalization(groups=1)(input_layer[:, :, 2:])
         x = keras.layers.concatenate([x1, x2], axis=2)
 
-        x_res = keras.layers.Dense(units=d_dims, activation='gelu')(x)
+        x_res = keras.layers.Dense(units=d_dims, activation=gelu_approximate)(x)
 
         for i in range(count_divisions_by_two(input_shape[0])+1):
             dilation_rate = 2 ** i
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
+            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation=gelu_approximate, padding='causal',
                                     dilation_rate=dilation_rate)(x_res)
             x = keras.layers.Dropout(dropout_rate)(x)
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
+            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation=gelu_approximate, padding='causal',
                                     dilation_rate=dilation_rate)(x)
 
             x_res = keras.layers.BatchNormalization()(x + x_res)
-            x_res = keras.layers.Activation('gelu')(x_res)
+            x_res = keras.layers.Activation(gelu_approximate)(x_res)
 
         y = keras.layers.Flatten()(x_res)
+        y = keras.layers.GroupNormalization(groups=1)(y)
         y = keras.layers.Dropout(dropout_rate)(y)
 
         y = FeatureWiseScalingLayer()(y)

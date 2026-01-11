@@ -6,6 +6,9 @@ from utils.sub_layer import conv_1d_1x1, conv_1d_1x3, conv_1d_1x5, conv_1d_1x7, 
 from utils.sub_layer import conv_2d_1x1, conv_2d_1x3, conv_2d_1x5, max_pool_2d_to_1x1
 
 
+def gelu_approximate(x):
+    return tf.nn.gelu(x, approximate=True)
+
 class PositionalEncoding(keras.layers.Layer):
     def __init__(self, position, d_model, **kwargs):
         """
@@ -223,7 +226,7 @@ class ScalingLayer(keras.layers.Layer):
 class FeatureWiseScalingLayer(keras.layers.Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.activation = keras.layers.Activation('gelu')
+        self.activation = keras.layers.Activation(gelu_approximate)
         self.scaling_vector = None
 
     def build(self, input_shape):

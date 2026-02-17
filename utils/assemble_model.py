@@ -38,7 +38,7 @@ def build_model(input_shape=(1, 1), dropout_rate=0.2):
     y2 = keras.layers.Dense(units=1, activation='linear')(y2)
     y2_add = keras.layers.add(inputs=[y2, y1], name='output_2')
 
-    y3 = keras.layers.concatenate(unputs=[y2_add, input_layer], axis=2)
+    y3 = keras.layers.concatenate(inputs=[y2_add, input_layer], axis=2)
 
     for i in range(3):
         y3_1 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
@@ -78,39 +78,39 @@ def build_model(input_shape=(1, 1), dropout_rate=0.2):
     return model
 
 
-with strategy.scope():
-    def build_reg_model(input_shape, pressure_scale=(0, 1), d_dims=64, dropout_rate=0.2, learning_rate=0.001):
-        input_layer = keras.layers.Input(shape=input_shape)
-        x1 = keras.layers.Rescaling(scale=pressure_scale[0], offset=pressure_scale[1])(input_layer[:, :, 0:2])
-        x2 = keras.layers.GroupNormalization(groups=1)(input_layer[:, :, 2:])
-        x = keras.layers.concatenate([x1, x2], axis=2)
+def build_reg_model(input_shape, pressure_scale=(0, 1), d_dims=64, dropout_rate=0.2, learning_rate=0.001,
+                    n_pressure_features=2, output_units=1):
+    input_layer = keras.layers.Input(shape=input_shape)
+    x1 = keras.layers.Rescaling(scale=pressure_scale[0], offset=pressure_scale[1])(input_layer[:, :, :n_pressure_features])
+    x2 = keras.layers.GroupNormalization(groups=1)(input_layer[:, :, n_pressure_features:])
+    x = keras.layers.concatenate([x1, x2], axis=2)
 
-        x_res = keras.layers.Dense(units=d_dims, activation=gelu_approximate)(x)
+    x_res = keras.layers.Dense(units=d_dims, activation=gelu_approximate)(x)
 
-        for i in range(count_divisions_by_two(input_shape[0])+1):
-            dilation_rate = 2 ** i
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation=gelu_approximate, padding='causal',
-                                    dilation_rate=dilation_rate)(x_res)
-            x = keras.layers.Dropout(dropout_rate)(x)
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation=gelu_approximate, padding='causal',
-                                    dilation_rate=dilation_rate)(x)
+    for i in range(count_divisions_by_two(input_shape[0])+1):
+        dilation_rate = 2 ** i
+        x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation=gelu_approximate, padding='causal',
+                                dilation_rate=dilation_rate)(x_res)
+        x = keras.layers.Dropout(dropout_rate)(x)
+        x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation=gelu_approximate, padding='causal',
+                                dilation_rate=dilation_rate)(x)
 
-            x_res = keras.layers.BatchNormalization()(x + x_res)
-            x_res = keras.layers.Activation(gelu_approximate)(x_res)
+        x_res = keras.layers.LayerNormalization(epsilon=1e-6)(x + x_res)
+        x_res = keras.layers.Activation(gelu_approximate)(x_res)
 
-        y = keras.layers.Flatten()(x_res)
-        y = keras.layers.GroupNormalization(groups=1)(y)
-        y = keras.layers.Dropout(dropout_rate)(y)
+    y = keras.layers.GlobalAveragePooling1D()(x_res)
+    y = keras.layers.GroupNormalization(groups=1)(y)
+    y = keras.layers.Dropout(dropout_rate)(y)
 
-        y = FeatureWiseScalingLayer()(y)
-        y = keras.layers.Dropout(dropout_rate)(y)
-        y = keras.layers.Dense(units=1, activation='linear')(y)
+    y = FeatureWiseScalingLayer()(y)
+    y = keras.layers.Dropout(dropout_rate)(y)
+    y = keras.layers.Dense(units=output_units, activation='linear')(y)
 
-        model = keras.models.Model(inputs=input_layer, outputs=y)
+    model = keras.models.Model(inputs=input_layer, outputs=y)
 
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
 
-        model.compile(optimizer=optimizer, loss=keras.losses.logcosh,
-                      metrics=['mean_absolute_error','mean_absolute_percentage_error'])
+    model.compile(optimizer=optimizer, loss=keras.losses.logcosh,
+                  metrics=['mean_absolute_error','mean_absolute_percentage_error'])
 
-        return model
+    return model

@@ -1,0 +1,6 @@
+numpy
+pandas
+onnxruntime
+RPi.GPIO
+paho-mqtt
+pymodbus

@@ -1,11 +1,7 @@
-import tensorflow as tf
-from tensorflow import keras
-from utils.layer import InceptionBlock1D, FeatureWiseScalingLayer
+import keras
+from utils.layer import InceptionBlock1D
 from utils.metric import smape
 from utils.miscellaneous import count_divisions_by_two
-
-
-strategy = tf.distribute.MirroredStrategy(devices=["/gpu:0", "/gpu:1"])
 
 
 def build_model(input_shape=(1, 1), dropout_rate=0.2):
@@ -37,7 +33,7 @@ def build_model(input_shape=(1, 1), dropout_rate=0.2):
     y2 = keras.layers.Dense(units=1, activation='linear')(y2)
     y2_add = keras.layers.add(inputs=[y2, y1], name='output_2')
 
-    y3 = keras.layers.concatenate(unputs=[y2_add, input_layer], axis=2)
+    y3 = keras.layers.concatenate(inputs=[y2_add, input_layer], axis=2)
 
     for i in range(3):
         y3_1 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
@@ -77,38 +73,36 @@ def build_model(input_shape=(1, 1), dropout_rate=0.2):
     return model
 
 
-with strategy.scope():
-    def build_reg_model(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.001):
-        input_layer = keras.layers.Input(shape=input_shape)
-        x1 = keras.layers.BatchNormalization()(input_layer[:, :, 0:2])
-        x2 = keras.layers.LayerNormalization()(input_layer[:, :, 2:])
-        x = keras.layers.concatenate([x1, x2], axis=2)
+def build_reg_model(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.001):
+    input_layer = keras.layers.Input(shape=input_shape)
+    # 모든 채널을 채널별 통계로 정규화한다. 단일 채널에 LayerNorm(axis=-1)을 적용하면
+    # 값이 항상 상수(beta)로 붕괴되어 해당 feature 신호가 소거되므로 BatchNormalization으로 통일한다.
+    x = keras.layers.BatchNormalization()(input_layer)
 
-        x_res = keras.layers.Dense(units=d_dims, activation='gelu')(x)
+    x_res = keras.layers.Dense(units=d_dims, activation='gelu')(x)
 
-        for i in range(count_divisions_by_two(input_shape[0])+1):
-            dilation_rate = 2 ** i
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
-                                    dilation_rate=dilation_rate)(x_res)
-            x = keras.layers.Dropout(dropout_rate)(x)
-            x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
-                                    dilation_rate=dilation_rate)(x)
+    for i in range(count_divisions_by_two(input_shape[0])+1):
+        dilation_rate = 2 ** i
+        x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
+                                dilation_rate=dilation_rate)(x_res)
+        x = keras.layers.Dropout(dropout_rate)(x)
+        x = keras.layers.Conv1D(filters=d_dims, kernel_size=3, activation='gelu', padding='causal',
+                                dilation_rate=dilation_rate)(x)
 
-            x_res = keras.layers.BatchNormalization()(x + x_res)
-            x_res = keras.layers.Activation('gelu')(x_res)
+        # 잔차 합 이후 활성화를 제거해 항등(identity) 지름길을 보존한다.
+        x_res = keras.layers.BatchNormalization()(x + x_res)
 
-        y = keras.layers.Flatten()(x_res)
-        y = keras.layers.LayerNormalization()(y)
-        y = keras.layers.Dropout(dropout_rate)(y)
+    y = keras.layers.GlobalAveragePooling1D()(x_res)
+    y = keras.layers.LayerNormalization()(y)
+    y = keras.layers.Dropout(dropout_rate)(y)
 
-        y = FeatureWiseScalingLayer()(y)
-        y = keras.layers.Dense(units=1, activation='linear')(y)
+    y = keras.layers.Dense(units=1, activation='linear')(y)
 
-        model = keras.models.Model(inputs=input_layer, outputs=y)
+    model = keras.models.Model(inputs=input_layer, outputs=y)
 
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
 
-        model.compile(optimizer=optimizer, loss=keras.losses.logcosh,
-                      metrics=['mean_absolute_error','mean_absolute_percentage_error'])
+    model.compile(optimizer=optimizer, loss=keras.losses.LogCosh(),
+                  metrics=['mean_absolute_error', 'mean_absolute_percentage_error'])
 
-        return model
+    return model

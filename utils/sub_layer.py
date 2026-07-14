@@ -1,5 +1,4 @@
-import tensorflow as tf
-from tensorflow import keras
+import keras
 
 
 def count_divisions_by_two(num):
@@ -46,6 +45,8 @@ def transformer_decoder(inputs, encoder_outputs, head_size, num_heads, ff_dim, d
 
 
 def fft_for_period(x, k=2):
+    import tensorflow as tf  # 이 함수는 tf.signal에 의존한다. 현재 파이프라인에서는 사용되지 않으므로 지연 import한다.
+
     x_transposed = tf.transpose(x, perm=[0, 2, 1])  # tf.signal.rfft는 마지막 축에 대해 수행되므로, 축을 변경해야 함 [B, T, C] -> [B, C, T]
     xf = tf.signal.rfft(x_transposed) # [B, C, F]
 

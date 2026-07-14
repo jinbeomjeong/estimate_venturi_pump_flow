@@ -1,7 +1,7 @@
 import numpy as np
-import tensorflow as tf
 
-from tensorflow import keras
+import keras
+from keras import ops
 from utils.sub_layer import conv_1d_1x1, conv_1d_1x3, conv_1d_1x5, conv_1d_1x7, max_pool_1d_to_1x1
 from utils.sub_layer import conv_2d_1x1, conv_2d_1x3, conv_2d_1x5, max_pool_2d_to_1x1
 
@@ -41,14 +41,14 @@ class PositionalEncoding(keras.layers.Layer):
         angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
 
         pos_encoding = angle_rads[np.newaxis, ...]
-        return tf.cast(pos_encoding, dtype=tf.float32)
+        return ops.cast(pos_encoding, dtype='float32')
 
     def call(self, inputs):
         """
         레이어의 정방향 계산을 수행합니다.
         입력 텐서에 포지셔널 인코딩을 더합니다.
         """
-        return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]
+        return inputs + self.pos_encoding[:, :ops.shape(inputs)[1], :]
 
     def get_config(self):
         config = super(PositionalEncoding, self).get_config()

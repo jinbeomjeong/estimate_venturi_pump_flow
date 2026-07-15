@@ -1,76 +1,5 @@
 import keras
-from utils.layer import InceptionBlock1D
-from utils.metric import smape
 from utils.miscellaneous import count_divisions_by_two
-
-
-def build_model(input_shape=(1, 1), dropout_rate=0.2):
-    input_layer = keras.layers.Input(shape=input_shape, name='input_layer')
-    y1 = input_layer
-
-    for i in range(3):
-        y1_1 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=64, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y1)
-        y1_1 = keras.layers.Conv1D(filters=input_shape[1], kernel_size=3, strides=1, activation='gelu', padding='same')(y1_1)
-        y1 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y1_1)
-
-    y1 = keras.layers.Conv1D(filters=input_shape[0], kernel_size=3, strides=1, activation='gelu', padding='same')(y1)
-    y1 = keras.layers.Dropout(dropout_rate)(y1)
-    y1 = keras.layers.Dense(units=1, activation='linear', name='output_1')(y1)
-
-    y2 = keras.layers.concatenate(inputs=[y1, input_layer], axis=2)
-
-    for i in range(3):
-        y2_1 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y2)
-        y2_1 = keras.layers.Conv1D(filters=input_shape[1], kernel_size=3, strides=1, activation='gelu', padding='same')(y2_1)
-        y2 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y2_1)
-
-    y2 = keras.layers.Conv1D(filters=input_shape[0], kernel_size=3, strides=1, activation='gelu', padding='same')(y2)
-    y2 = keras.layers.Dropout(dropout_rate)(y2)
-    y2 = keras.layers.Dense(units=1, activation='linear')(y2)
-    y2_add = keras.layers.add(inputs=[y2, y1], name='output_2')
-
-    y3 = keras.layers.concatenate(inputs=[y2_add, input_layer], axis=2)
-
-    for i in range(3):
-        y3_1 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y3)
-        y3_1 = keras.layers.Conv1D(filters=input_shape[1], kernel_size=3, strides=1, activation='gelu', padding='same')(y3_1)
-        y3 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y3_1)
-
-    y3 = keras.layers.Conv1D(filters=input_shape[0], kernel_size=3, strides=1, activation='gelu', padding='same')(y3)
-    y3 = keras.layers.Dropout(dropout_rate)(y3)
-    y3 = keras.layers.Dense(units=1, activation='linear')(y3)
-    y3_add = keras.layers.add(inputs=[y3, y2_add], name='output_3')
-
-    y4 = keras.layers.concatenate(inputs=[y3_add, input_layer], axis=2)
-
-    for j in range(3):
-        y4_1 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y4)
-        y4_1 = keras.layers.Conv1D(filters=input_shape[1], kernel_size=3, strides=1, activation='gelu', padding='same')(y4_1)
-        y4 = InceptionBlock1D(output_dim_1x1=384, hidden_dim_3x3=192, output_dim_3x3=384, hidden_dim_5x5=48, output_dim_5x5=128,
-                                hidden_dim_7x7=32, output_dim_7x7=64, output_dim_max_pool=128, dropout_rate=dropout_rate)(y4_1)
-
-    y4 = keras.layers.Conv1D(filters=input_shape[0], kernel_size=3, strides=1, activation='gelu', padding='same')(y4)
-    y4 = keras.layers.Dropout(dropout_rate)(y4)
-    y4 = keras.layers.Dense(units=1, activation='linear')(y4)
-
-    y4_add = keras.layers.add([y4, y3_add], name='output_4')
-
-    optimizer = keras.optimizers.Adam(learning_rate=0.001)
-    model = keras.models.Model(inputs=input_layer, outputs=[y1, y2_add, y3_add, y4_add])
-    model.compile(optimizer=optimizer, loss={'output_1': 'mse', 'output_2': 'mse', 'output_3': 'mse', 'output_4': 'mse'},
-                  loss_weights={'output_1': 1.0, 'output_2': 1.0, 'output_3': 1.0, 'output_4': 1.0},
-                  metrics={'output_1': ['mean_absolute_error', 'mean_absolute_percentage_error', smape],
-                           'output_2': ['mean_absolute_error', 'mean_absolute_percentage_error', smape],
-                           'output_3': ['mean_absolute_error', 'mean_absolute_percentage_error', smape],
-                           'output_4': ['mean_absolute_error', 'mean_absolute_percentage_error', smape]})
-    return model
 
 
 def build_reg_model(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.001):
@@ -92,10 +21,10 @@ def build_reg_model(input_shape, d_dims=64, dropout_rate=0.2, learning_rate=0.00
         # 잔차 합 이후 활성화를 제거해 항등(identity) 지름길을 보존한다.
         x_res = keras.layers.BatchNormalization()(x + x_res)
 
+    # 회귀 헤드: 시간축 평균풀링 → 선형 readout.
+    # (헤드 A/B 비교 결과 pre-readout LayerNorm을 제거한 이 구조가 저유량 상대오차·MAE에서 최적이었다.)
     y = keras.layers.GlobalAveragePooling1D()(x_res)
-    y = keras.layers.LayerNormalization()(y)
     y = keras.layers.Dropout(dropout_rate)(y)
-
     y = keras.layers.Dense(units=1, activation='linear')(y)
 
     model = keras.models.Model(inputs=input_layer, outputs=y)

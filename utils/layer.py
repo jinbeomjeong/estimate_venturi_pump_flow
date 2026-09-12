@@ -325,6 +325,13 @@ class ChannelGate(keras.layers.Layer):
         self.init = tuple(init)
 
     def build(self, input_shape):
+        # init 길이가 채널 수와 다르면 x * gate 가 브로드캐스팅되면서 채널 수가
+        # 조용히 늘어납니다. 그러면 그래프를 만들 때와 실제로 부를 때의 모양이
+        # 달라져 한참 뒤에야 엉뚱한 곳에서 터집니다. 여기서 바로 막습니다.
+        if len(self.init) != input_shape[-1]:
+            raise ValueError(f'ChannelGate init has {len(self.init)} values but the input has '
+                             f'{input_shape[-1]} channels; give one initial value per channel.')
+
         self.gate = self.add_weight(shape=(input_shape[-1],), name='gate',
                                     initializer=keras.initializers.Constant(np.asarray(self.init, dtype=np.float32)),
                                     regularizer=keras.regularizers.L2(self.l2), trainable=True)

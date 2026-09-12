@@ -227,6 +227,11 @@ def build_flow_model_v2(input_shape=(20, 3), feature_stats=((0.0, 0.0), (1.0, 1.
     # against itself would throw the signal away.
     x = keras.layers.Rescaling(scale=1.0 / feature_std, offset=-feature_mean / feature_std,
                                name='input_scaling')(x)
+    # 게이트 초깃값은 실제로 선택된 채널 수와 길이가 같아야 합니다. 길이가 다르면
+    # 브로드캐스팅으로 채널 수가 바뀌므로 ChannelGate가 바로 막아 세웁니다.
+    if len(gate_init) != len(feature_channels):
+        gate_init = (1.0,) * len(feature_channels)
+
     x = ChannelGate(l2=gate_l2, init=gate_init, name='channel_gate')(x)
 
     features = MultiScaleSmoothing(spans=spans, name='multi_scale')(x)

@@ -242,3 +242,134 @@ class FeatureWiseScalingLayer(keras.layers.Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape
+
+
+class ChannelSelect(keras.layers.Layer):
+    """
+    입력 텐서에서 지정한 채널만 골라냅니다.
+
+    로깅/추론 버퍼는 (시간, 3) 모양을 그대로 유지하되, 모델이 실제로 보는 채널은
+    여기서 확정합니다. 정규화 레이어가 알아서 무시해주길 기대하는 대신
+    구조로 못 박는 쪽이 안전합니다.
+
+    Args:
+        channels (tuple): 사용할 채널 인덱스. 예) (0, 1) - 압력 2채널만 사용
+    """
+    def __init__(self, channels=(0, 1), **kwargs):
+        super().__init__(**kwargs)
+        self.channels = tuple(int(c) for c in channels)
+
+    def call(self, inputs):
+        return tf.gather(inputs, list(self.channels), axis=-1)
+
+    def compute_output_shape(self, input_shape):
+        return tuple(input_shape[:-1]) + (len(self.channels),)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'channels': list(self.channels)})
+
+        return config
+
+
+class MultiScaleSmoothing(keras.layers.Layer):
+    """
+    윈도우를 여러 길이로 평균 내어 한 벡터로 합칩니다.
+
+    유량 추정에서 20스텝 창이 실제로 하는 일은 '동특성 파악'이 아니라
+    '센서 잡음 제거'입니다(마지막 1샘플만 쓰면 MAPE가 약 0.4%p 나빠짐).
+    그래서 팽창 합성곱이 평균을 스스로 배우도록 두지 않고, 여러 구간의
+    평균을 직접 만들어 넘겨줍니다.
+
+    Args:
+        spans (tuple): 평균을 낼 뒤쪽 구간 길이들. 예) (1, 3, 5, 10, 20)
+
+    출력 shape: (batch, len(spans) * channels)
+    """
+    def __init__(self, spans=(1, 3, 5, 10, 20), **kwargs):
+        super().__init__(**kwargs)
+        self.spans = tuple(spans)
+
+    def call(self, inputs):
+        pooled = [tf.reduce_mean(inputs[:, -span:, :], axis=1) for span in self.spans]
+
+        return keras.layers.concatenate(pooled, axis=-1)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0], len(self.spans) * input_shape[-1]
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'spans': list(self.spans)})
+
+        return config
+
+
+class ChannelGate(keras.layers.Layer):
+    """
+    입력 채널마다 학습 가능한 스칼라를 곱합니다. 가중치에 L2 벌점이 걸려 있어
+    '도움이 될 때만' 채널을 쓰게 됩니다.
+
+    흡입측 압력은 한 세션 안에서는 유량과 잘 맞지만, 세션이 바뀌면 회귀계수의
+    부호까지 뒤집힙니다(학습 -7719, 검증 -244, 테스트 +1177). 그대로 두면
+    모델이 학습 세션에서만 통하는 관계를 외웁니다. 이 게이트가 그 의존도에
+    비용을 매깁니다.
+
+    Args:
+        l2 (float): 게이트 가중치에 걸 L2 벌점.
+        init (tuple): 채널별 게이트 초깃값. 불안정한 채널은 작게 시작시킵니다.
+    """
+    def __init__(self, l2=1e-2, init=(0.3, 1.0), **kwargs):
+        super().__init__(**kwargs)
+        self.l2 = l2
+        self.init = tuple(init)
+
+    def build(self, input_shape):
+        self.gate = self.add_weight(shape=(input_shape[-1],), name='gate',
+                                    initializer=keras.initializers.Constant(np.asarray(self.init, dtype=np.float32)),
+                                    regularizer=keras.regularizers.L2(self.l2), trainable=True)
+        super().build(input_shape)
+
+    def call(self, inputs):
+        return inputs * self.gate
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'l2': self.l2, 'init': list(self.init)})
+
+        return config
+
+
+class ScaledResidual(keras.layers.Layer):
+    """
+    y = trunk + alpha * correction  (alpha는 0에서 시작하는 학습 가능한 스칼라)
+
+    선형 줄기(trunk)가 처음부터 예측을 책임지고, 비선형 보정(correction)은
+    alpha가 자라는 만큼만 개입합니다. 학습 초반이 안정되고, 비선형 항이
+    예측을 얼마나 끌고 갈 수 있는지도 한 숫자로 확인할 수 있습니다.
+    """
+    def __init__(self, init=0.0, **kwargs):
+        super().__init__(**kwargs)
+        self.init = init
+
+    def build(self, input_shape):
+        self.alpha = self.add_weight(shape=(1,), name='alpha', initializer=keras.initializers.Constant(self.init),
+                                     trainable=True)
+        super().build(input_shape)
+
+    def call(self, inputs):
+        trunk, correction = inputs
+
+        return trunk + (self.alpha * correction)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0]
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'init': self.init})
+
+        return config

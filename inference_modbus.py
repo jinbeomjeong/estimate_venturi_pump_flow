@@ -204,11 +204,13 @@ def main_loop():
 
     # Load ONNX inference model
     seq_len = 20
-    model = ort.InferenceSession(f'models/model_{seq_len}.onnx')
+    model = ort.InferenceSession(f'models/model_{seq_len}_v2.onnx')
     logger.info("regression model loaded!")
 
-    # Initialize input buffer for the ONNX model
+    # Initialize input buffer for the ONNX model. The model still takes three
+    # channels so this buffer is unchanged, but it only reads the two pressures.
     input_buf = np.zeros(shape=(1, seq_len, 3), dtype=np.float32)
+    n_filled = 0  # the window starts full of zeros, so hold off until it is real data
     led_state = True
     t0 = time.perf_counter() # Start time for the main loop
 
@@ -271,23 +273,30 @@ def main_loop():
         # Update input buffer for the ONNX model
         input_buf = np.roll(a=input_buf, shift=-1, axis=1)
         input_buf[0, -1, :] = np.concatenate([pressure_arr, rpm_arr], axis=0)
+        n_filled = min(n_filled + 1, seq_len)
 
         # Run ONNX model inference to estimate flowrate
-        est_flow = np.squeeze(model.run(output_names=None, input_feed={'input': input_buf})).item()
+        if n_filled < seq_len:
+            # Still warming up: part of the window is padding zeros, so any
+            # prediction from it is meaningless.
+            est_flow = 0.0
+        else:
+            est_flow = np.squeeze(model.run(output_names=None, input_feed={'input': input_buf})).item()
 
         # If RPM is very low, set estimated flow to 0
         if rpm_arr[0] <= 10:
             est_flow = 0
 
-        pred_output = 99999 # Placeholder for predicted output
-        pred_output = np.clip(pred_output, 1, 99999) # Clip predicted output to a valid range
+        # Publish the estimate itself. This used to publish a fixed 99999, which
+        # meant the estimate only ever reached the CSV log and never MQTT.
+        pred_output = np.clip(est_flow, 1, 99999) # Clip predicted output to a valid range
 
         # --- Write to output LED client (commented out) ---
         # output_led_client.write_registers(device_id=1, address=0x1, values=value_to_reg(int(pred_output)))
 
         # Publish data via MQTT
         client.publish(topic=system_time_topic, payload=struct.pack('<f', relative_time))
-        client.publish(topic=venturi_pump_flowrate_predict_topic, payload=struct.pack('<f', pred_output))
+        client.publish(topic=venturi_pump_flowrate_predict_topic, payload=struct.pack('<f', float(pred_output)))
         client.publish(topic=venturi_pump_flowrate_gt_topic, payload=struct.pack('<f', flowrate_arr[0].item()))
 
         with value_lock:

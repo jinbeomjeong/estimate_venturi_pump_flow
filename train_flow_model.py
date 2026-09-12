@@ -9,7 +9,7 @@
   테스트(data/test_data/2025-11-14): 아무 데도 쓰지 않음 -> 이 숫자만 믿으면 됩니다
 
 사용법:
-    python train_flow_model.py                # 학습 후 models/model_20.keras 저장
+    python train_flow_model.py                # 학습 후 models/model_20_v2.keras 저장
     python train_flow_model.py --no-save      # 숫자만 확인
 """
 import os
@@ -31,7 +31,7 @@ VAL_FILES = [os.path.join('data', 'test_data', name) for name in
              ['data20251117-142801.csv', 'data20251117-143219.csv', 'data20251117-143505.csv',
               'data20251117-143657.csv', 'data20251117-143831.csv']]
 TEST_FILES = [os.path.join('data', 'test_data', 'data20251114-170633.csv')]
-FEATURE_CHANNELS = (0, 1)   # 흡입 압력, 토출 압력. 회전수는 쓰지 않습니다.
+FEATURE_CHANNELS = (1,)     # 토출 압력만. 회전수와 흡입 압력은 쓰지 않습니다(MODEL.md 참고).
 
 
 def evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
@@ -103,6 +103,8 @@ def main():
 
         alpha = float(model.get_layer('residual_mix').alpha.numpy()[0])
         gate = model.get_layer('channel_gate').gate.numpy()
+        # alpha 는 비선형 보정이 실제로 얼마나 개입하는지, gate 는 각 입력 채널을
+        # 얼마나 신뢰하고 있는지를 한 숫자로 보여줍니다.
         print(f'  seed {seed}: residual alpha {alpha:+.4f}  channel gate {np.round(gate, 4)}')
 
     print(f'\n--- {len(args.seeds)} seed ensemble ({model.count_params():,} parameters) ---')

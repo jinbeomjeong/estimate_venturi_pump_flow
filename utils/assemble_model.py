@@ -169,9 +169,9 @@ def build_reg_model(input_shape, pressure_scale=(0, 1), d_dims=64, dropout_rate=
     return model
 
 
-def build_flow_model_v2(input_shape=(20, 3), feature_stats=((0.0, 0.0), (1.0, 1.0)), target_stats=(0.0, 1.0),
-                        feature_channels=(0, 1), width=32, dropout_rate=0.1, weight_decay=1e-4,
-                        gate_l2=1e-2, gate_init=(0.3, 1.0), spans=(1, 3, 5, 10, 20), learning_rate=3e-3,
+def build_flow_model_v2(input_shape=(20, 3), feature_stats=(0.0, 1.0), target_stats=(0.0, 1.0),
+                        feature_channels=(1,), width=32, dropout_rate=0.1, weight_decay=1e-4,
+                        gate_l2=1e-2, gate_init=None, spans=(1, 3, 5, 10, 20), learning_rate=3e-3,
                         loss=None):
     """
     Builds the venturi flow estimator: a linear trunk with a small gated nonlinear correction.
@@ -185,27 +185,41 @@ def build_flow_model_v2(input_shape=(20, 3), feature_stats=((0.0, 0.0), (1.0, 1.
         (last sample 4.75% MAPE vs 20-step mean 4.34%), so the averages are handed
         to the network directly;
       * within one session the pressure-to-flow relation is close to linear
-        (R2 0.99 on the validation session), while the *bias* moves from session to
-        session, which is variance a large model makes worse, not better.
+        (R2 0.99 on the validation session), while the coefficients move from session
+        to session, which is variance a large model makes worse, not better.
 
     So the trunk stays linear and generalises, and everything nonlinear has to come
     through ScaledResidual, whose alpha starts at zero.
 
+    The suction-side channel is left out by default. Fitted per session, its coefficient
+    does not merely drift, it changes sign (-7719 / -244 / +1177 across the three logged
+    sessions) while the discharge coefficient stays at 769-890, so a model that leans on
+    it learns a relation that only holds in the session it was trained on. Held out, the
+    error falls monotonically as that channel is suppressed: 6.56% MAPE using it, 6.31%
+    with a heavier gate penalty, 5.69% without it. The channel is expected to carry real
+    information about suction lift and hose restriction once those are varied in the
+    logs, so ChannelGate and the `feature_channels` argument keep the way back open
+    rather than deleting the sensor from the code.
+
     The input keeps its (timesteps, 3) shape so the logging and inference buffers do
     not have to change, but only `feature_channels` reaches the network -- pump speed
-    is excluded structurally, not by hoping a normalisation layer discards it.
+    and, by default, suction pressure are excluded structurally, not by hoping a
+    normalisation layer discards them.
 
     Args:
         input_shape (tuple): Shape of the input window, e.g. (20, 3).
         feature_stats (tuple): (mean, std) per selected channel, from the training set.
         target_stats (tuple): (mean, std) of the training flow rate, folded into the
             output layer so the model emits LPM while learning a standardised target.
-        feature_channels (tuple): Channel indices the model is allowed to see.
+        feature_channels (tuple): Channel indices the model is allowed to see. Defaults to
+            the discharge pressure alone -- see the note on the suction channel below.
         width (int): Hidden units of the nonlinear correction branch.
         dropout_rate (float): Dropout rate of the correction branch.
         weight_decay (float): L2 penalty on the dense kernels.
         gate_l2 (float): L2 penalty on the per-channel input gate.
-        gate_init (tuple): Initial gate value per selected channel.
+        gate_init (tuple): Initial gate value per selected channel, one per channel.
+            None starts every channel at 1.0. Bringing the suction channel back is
+            `feature_channels=(0, 1), gate_init=(0.3, 1.0)`.
         spans (tuple): Trailing window lengths averaged by MultiScaleSmoothing.
         learning_rate (float): Initial learning rate for Adam.
         loss: Keras loss. Defaults to log-cosh, which behaves like MAE on LPM-scale errors.
@@ -227,9 +241,9 @@ def build_flow_model_v2(input_shape=(20, 3), feature_stats=((0.0, 0.0), (1.0, 1.
     # against itself would throw the signal away.
     x = keras.layers.Rescaling(scale=1.0 / feature_std, offset=-feature_mean / feature_std,
                                name='input_scaling')(x)
-    # 게이트 초깃값은 실제로 선택된 채널 수와 길이가 같아야 합니다. 길이가 다르면
+    # 게이트 초깃값은 선택된 채널 수와 길이가 같아야 합니다. 길이가 다르면
     # 브로드캐스팅으로 채널 수가 바뀌므로 ChannelGate가 바로 막아 세웁니다.
-    if len(gate_init) != len(feature_channels):
+    if gate_init is None:
         gate_init = (1.0,) * len(feature_channels)
 
     x = ChannelGate(l2=gate_l2, init=gate_init, name='channel_gate')(x)

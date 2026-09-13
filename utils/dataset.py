@@ -181,10 +181,13 @@ def split_valid_runs(raw_data: pd.DataFrame, columns: list, min_rpm: float = 700
     return run_list
 
 
-def make_windows(run_list: list, seq_len: int = 20) -> tuple:
+def make_windows(run_list: list, seq_len: int = 20, n_features: int = 2) -> tuple:
     """
-    연속 구간들을 (n_samples, seq_len, 3) 특징과 (n_samples,) 타깃으로 바꿉니다.
+    연속 구간들을 (n_samples, seq_len, n_features) 특징과 (n_samples,) 타깃으로 바꿉니다.
     창은 한 구간 안에서만 만들어지므로 서로 다른 운전을 섞지 않습니다.
+
+    기본값 2는 압력 두 채널(흡입, 토출)입니다. 회전수는 운전 구간을 고르는 데만
+    쓰이고 모델 입력에는 들어가지 않습니다.
     """
     feature_list, target_list = [], []
 
@@ -192,18 +195,19 @@ def make_windows(run_list: list, seq_len: int = 20) -> tuple:
         if run.shape[0] < seq_len:
             continue
 
-        window = np.lib.stride_tricks.sliding_window_view(run[:, 0:3], seq_len, axis=0)
+        window = np.lib.stride_tricks.sliding_window_view(run[:, 0:n_features], seq_len, axis=0)
         feature_list.append(np.transpose(window, axes=(0, 2, 1)))
         target_list.append(run[seq_len - 1:, 3])
 
     if not feature_list:
-        return np.empty((0, seq_len, 3), np.float32), np.empty((0,), np.float32)
+        return np.empty((0, seq_len, n_features), np.float32), np.empty((0,), np.float32)
 
     return (np.concatenate(feature_list).astype(np.float32),
             np.concatenate(target_list).astype(np.float32))
 
 
-def load_flow_dataset(train_dir: str, test_file_list: list, seq_len: int = 20, period: float = 0.5) -> tuple:
+def load_flow_dataset(train_dir: str, test_file_list: list, seq_len: int = 20, period: float = 0.5,
+                      n_features: int = 2) -> tuple:
     """
     유량 추정용 학습/평가 데이터를 읽어 시퀀스로 만듭니다.
 
@@ -212,6 +216,7 @@ def load_flow_dataset(train_dir: str, test_file_list: list, seq_len: int = 20, p
         test_file_list (list): 헤더가 있는 평가 로그(csv) 경로 리스트.
         seq_len (int): 입력 창 길이.
         period (float): 리샘플링 간격(초).
+        n_features (int): 창에 담을 채널 수. 기본 2 = 압력 두 채널.
 
     Returns:
         tuple: ((train_feature, train_target), (test_feature, test_target))
@@ -233,4 +238,5 @@ def load_flow_dataset(train_dir: str, test_file_list: list, seq_len: int = 20, p
         raw_data.columns = ['time(sec)'] + FLOW_COLUMNS
         test_runs += split_valid_runs(resample_by_period(raw_data, period), FLOW_COLUMNS)
 
-    return make_windows(train_runs, seq_len), make_windows(test_runs, seq_len)
+    return (make_windows(train_runs, seq_len, n_features),
+            make_windows(test_runs, seq_len, n_features))

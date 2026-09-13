@@ -3,7 +3,7 @@ import tensorflow as tf
 from tensorflow import keras
 from utils.model import time_mixer_block
 from utils.layer import InceptionBlock1D, ScalingLayer, FeatureWiseScalingLayer, gelu_approximate
-from utils.layer import ChannelSelect, MultiScaleSmoothing, ChannelGate, ScaledResidual
+from utils.layer import ChannelSelect, DifferentialPressure, MultiScaleSmoothing, ChannelGate, ScaledResidual
 from utils.metric import smape, WeightedMaeMapeLoss
 from utils.miscellaneous import count_divisions_by_two
 
@@ -169,10 +169,10 @@ def build_reg_model(input_shape, pressure_scale=(0, 1), d_dims=64, dropout_rate=
     return model
 
 
-def build_flow_model_v2(input_shape=(20, 3), feature_stats=(0.0, 1.0), target_stats=(0.0, 1.0),
-                        feature_channels=(1,), width=32, dropout_rate=0.1, weight_decay=1e-4,
-                        gate_l2=1e-2, gate_init=None, spans=(1, 3, 5, 10, 20), learning_rate=3e-3,
-                        loss=None):
+def build_flow_model_v2(input_shape=(20, 2), feature_stats=(0.0, 1.0), target_stats=(0.0, 1.0),
+                        feature_channels=(0, 1), use_differential=True, width=32, dropout_rate=0.1,
+                        weight_decay=1e-4, gate_l2=1e-2, gate_init=None, spans=(1, 3, 5, 10, 20),
+                        learning_rate=3e-3, loss=None):
     """
     Builds the venturi flow estimator: a linear trunk with a small gated nonlinear correction.
 
@@ -191,28 +191,35 @@ def build_flow_model_v2(input_shape=(20, 3), feature_stats=(0.0, 1.0), target_st
     So the trunk stays linear and generalises, and everything nonlinear has to come
     through ScaledResidual, whose alpha starts at zero.
 
-    The suction-side channel is left out by default. Fitted per session, its coefficient
-    does not merely drift, it changes sign (-7719 / -244 / +1177 across the three logged
-    sessions) while the discharge coefficient stays at 769-890, so a model that leans on
-    it learns a relation that only holds in the session it was trained on. Held out, the
-    error falls monotonically as that channel is suppressed: 6.56% MAPE using it, 6.31%
-    with a heavier gate penalty, 5.69% without it. The channel is expected to carry real
-    information about suction lift and hose restriction once those are varied in the
-    logs, so ChannelGate and the `feature_channels` argument keep the way back open
-    rather than deleting the sensor from the code.
+    The suction channel reaches the network as a difference, not on its own. Fitted per
+    session its raw coefficient does not merely drift, it changes sign (-7719 / -244 /
+    +1177 across the logged sessions) while the discharge coefficient stays at 769-890.
+    Scored on the six logged sessions independently, with early stopping moved onto a
+    tail slice of the training windows so no session touches the fit:
 
-    The input keeps its (timesteps, 3) shape so the logging and inference buffers do
-    not have to change, but only `feature_channels` reaches the network -- pump speed
-    and, by default, suction pressure are excluded structurally, not by hoping a
-    normalisation layer discards them.
+        discharge alone                    3.97 mean MAPE
+        + suction raw, gate neutral        4.55   worse on all six sessions
+        + suction raw, gate suppressed     4.31
+        + differential (discharge-suction) 3.90   better on four of six
+
+    So the problem was the form, not the sensor: the differential is the head the pump
+    actually produces, and a suction-side zero that shifts between sessions largely
+    cancels against the discharge reading it is subtracted from. Suction alone is worth
+    little (8.71). DifferentialPressure does that conversion, and `use_differential`
+    turns it off for the raw pair.
+
+    Pump speed is not an input at all -- the model takes the two pressures and nothing
+    else, so its input is exactly what it uses.
 
     Args:
         input_shape (tuple): Shape of the input window, e.g. (20, 3).
         feature_stats (tuple): (mean, std) per selected channel, from the training set.
         target_stats (tuple): (mean, std) of the training flow rate, folded into the
             output layer so the model emits LPM while learning a standardised target.
-        feature_channels (tuple): Channel indices the model is allowed to see. Defaults to
-            the discharge pressure alone -- see the note on the suction channel below.
+        feature_channels (tuple): Channel indices the model is allowed to see, in
+            [suction, discharge] order.
+        use_differential (bool): Feed [discharge, discharge - suction] instead of the two
+            raw pressures. Requires exactly two selected channels. See the note below.
         width (int): Hidden units of the nonlinear correction branch.
         dropout_rate (float): Dropout rate of the correction branch.
         weight_decay (float): L2 penalty on the dense kernels.
@@ -235,6 +242,13 @@ def build_flow_model_v2(input_shape=(20, 3), feature_stats=(0.0, 1.0), target_st
 
     # Keep only the channels the model is allowed to use.
     x = ChannelSelect(channels=feature_channels, name='select_channels')(input_layer)
+
+    if use_differential:
+        if len(feature_channels) != 2:
+            raise ValueError('use_differential needs exactly two channels, in [suction, discharge] '
+                             f'order; got {feature_channels}.')
+
+        x = DifferentialPressure(name='differential_pressure')(x)
 
     # Fixed affine scaling from training statistics. Never per sample: the absolute
     # pressure level is what the flow rate is read from, so normalising each window

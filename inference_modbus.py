@@ -207,9 +207,9 @@ def main_loop():
     model = ort.InferenceSession(f'models/model_{seq_len}_v2.onnx')
     logger.info("regression model loaded!")
 
-    # Initialize input buffer for the ONNX model. The model still takes three
-    # channels so this buffer is unchanged, but it only reads the two pressures.
-    input_buf = np.zeros(shape=(1, seq_len, 3), dtype=np.float32)
+    # Initialize input buffer for the ONNX model. The model takes the two pressures
+    # and nothing else, so its input is exactly what it uses.
+    input_buf = np.zeros(shape=(1, seq_len, 2), dtype=np.float32)
     n_filled = 0  # the window starts full of zeros, so hold off until it is real data
     led_state = True
     t0 = time.perf_counter() # Start time for the main loop
@@ -272,7 +272,7 @@ def main_loop():
 
         # Update input buffer for the ONNX model
         input_buf = np.roll(a=input_buf, shift=-1, axis=1)
-        input_buf[0, -1, :] = np.concatenate([pressure_arr, rpm_arr], axis=0)
+        input_buf[0, -1, :] = pressure_arr   # [흡입압, 토출압]. 회전수는 로깅과 정지 판정용
         n_filled = min(n_filled + 1, seq_len)
 
         # Run ONNX model inference to estimate flowrate

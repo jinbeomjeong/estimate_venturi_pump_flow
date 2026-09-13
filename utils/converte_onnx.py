@@ -2,7 +2,7 @@ import os, keras, tf2onnx, logging
 import tensorflow as tf
 
 from utils.layer import FeatureWiseScalingLayer, gelu_approximate
-from utils.layer import ChannelSelect, MultiScaleSmoothing, ChannelGate, ScaledResidual
+from utils.layer import ChannelSelect, DifferentialPressure, MultiScaleSmoothing, ChannelGate, ScaledResidual
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,6 +15,7 @@ model_path = os.path.join('models', f'{model_name}.keras')
 custom_objects = {'FeatureWiseScalingLayer': FeatureWiseScalingLayer,
                   'gelu_approximate': gelu_approximate,
                   'ChannelSelect': ChannelSelect,
+                  'DifferentialPressure': DifferentialPressure,
                   'MultiScaleSmoothing': MultiScaleSmoothing,
                   'ChannelGate': ChannelGate,
                   'ScaledResidual': ScaledResidual}

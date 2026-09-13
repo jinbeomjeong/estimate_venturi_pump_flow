@@ -272,6 +272,32 @@ class ChannelSelect(keras.layers.Layer):
         return config
 
 
+class DifferentialPressure(keras.layers.Layer):
+    """
+    [흡입압, 토출압] 두 채널을 [토출압, 토출압 − 흡입압] 으로 바꿉니다. 파라미터는 없습니다.
+
+    흡입압을 날것 그대로 넣으면 세션마다 회귀계수의 부호까지 뒤집혀 일반화를
+    해칩니다. 로그로 남은 6개 세션에서 각각 재어 본 MAPE 평균입니다.
+
+        토출압만                     3.97
+        토출 + 흡입 (게이트 중립)     4.55   <- 6개 세션 전부 나빠짐
+        토출 + 흡입 (게이트 억제)     4.31
+        토출 + 차압                  3.90   <- 6개 중 4개 세션에서 앞섬
+
+    흡입압 자체가 쓸모없는 것이 아니라(단독으로는 8.71로 나쁘지만) 넣는 방식의
+    문제였습니다. 차압은 펌프가 실제로 만들어 내는 양정에 해당해서, 흡입측
+    영점이 세션마다 달라져도 토출압과 같이 움직이는 만큼 상쇄됩니다.
+    """
+    def call(self, inputs):
+        inlet = inputs[..., 0:1]
+        outlet = inputs[..., 1:2]
+
+        return keras.layers.concatenate([outlet, outlet - inlet], axis=-1)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
 class MultiScaleSmoothing(keras.layers.Layer):
     """
     윈도우를 여러 길이로 평균 내어 한 벡터로 합칩니다.
